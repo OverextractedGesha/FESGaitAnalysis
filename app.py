@@ -46,6 +46,10 @@ if uploaded_file is not None:
             'CH8': 'R_Foot_Acc_Y'
         }
         df.rename(columns=column_mapping, inplace=True)
+
+        # Fix: Generate a Time column if missing (assumes 100Hz sampling rate)
+        if 'Time' not in df.columns:
+            df['Time'] = np.arange(len(df)) * 0.01
         
         st.session_state['sensor_data'] = df
         st.sidebar.success(f"Loaded: {uploaded_file.name}")
@@ -54,7 +58,6 @@ if uploaded_file is not None:
 
 tab1, tab2 = st.tabs(["SENSOR SYSTEM (Gait Analysis)", "OPEN-LOOP FES SYSTEM"])
 
-# Bulletproof check to avoid DataFrame truth value errors
 data_exists = isinstance(st.session_state.get('sensor_data'), pd.DataFrame)
 
 with tab1:
@@ -89,22 +92,22 @@ with tab1:
                 fig_knee.add_trace(go.Scatter(x=x_axis, y=df['L_Knee'], name='Left Knee (Raw)', line=dict(color='lightgray')))
                 fig_knee.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['L_Knee'], alpha_val), name='Left Knee (LPF)', line=dict(color='blue')))
                 fig_knee.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['R_Knee'], alpha_val), name='Right Knee (LPF)', line=dict(color='orange', dash='dot')))
-                fig_knee.update_layout(title="KNEE JOINT", xaxis_title="Time (s)", yaxis_title="Deg", height=300, margin=dict(t=30, b=10))
-                st.plotly_chart(fig_knee, use_container_width=True)
+                fig_knee.update_layout(title="KNEE JOINT", xaxis_title="Time (s) [Assumed 100Hz]", yaxis_title="Deg", height=300, margin=dict(t=30, b=10))
+                st.plotly_chart(fig_knee)
 
             if 'L_Ankle' in df.columns and 'R_Ankle' in df.columns:
                 fig_ankle = go.Figure()
                 fig_ankle.add_trace(go.Scatter(x=x_axis, y=df['L_Ankle'], name='Left Ankle (Raw)', line=dict(color='lightgray')))
                 fig_ankle.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['L_Ankle'], alpha_val), name='Left Ankle (LPF)', line=dict(color='green')))
                 fig_ankle.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['R_Ankle'], alpha_val), name='Right Ankle (LPF)', line=dict(color='purple', dash='dot')))
-                fig_ankle.update_layout(title="ANKLE JOINT", xaxis_title="Time (s)", yaxis_title="Deg", height=300, margin=dict(t=30, b=10))
-                st.plotly_chart(fig_ankle, use_container_width=True)
+                fig_ankle.update_layout(title="ANKLE JOINT", xaxis_title="Time (s) [Assumed 100Hz]", yaxis_title="Deg", height=300, margin=dict(t=30, b=10))
+                st.plotly_chart(fig_ankle)
                 
             if 'Label' in df.columns:
                 fig_label = go.Figure()
                 fig_label.add_trace(go.Scatter(x=x_axis, y=df['Label'], name='Gait Label', line=dict(color='red', shape='hv')))
-                fig_label.update_layout(title="GAIT PHASE (Label)", xaxis_title="Time (s)", yaxis_title="Phase ID", height=200, margin=dict(t=30, b=10))
-                st.plotly_chart(fig_label, use_container_width=True)
+                fig_label.update_layout(title="GAIT PHASE (Label)", xaxis_title="Time (s) [Assumed 100Hz]", yaxis_title="Phase ID", height=200, margin=dict(t=30, b=10))
+                st.plotly_chart(fig_label)
     else:
         st.info("Upload sensor data to view the Sensor System.")
 
@@ -128,3 +131,11 @@ with tab2:
         st.number_input("Gastroc (KF)", value=500)
         st.button("START FES")
         st.button("STOP FES")
+
+    with fes_plot_col:
+        fig_boost = go.Figure()
+        fig_boost.update_layout(title="Boost Voltage", height=200, margin=dict(t=30, b=10))
+        st.plotly_chart(fig_boost)
+        fig_fes_hip = go.Figure()
+        fig_fes_hip.update_layout(title="HIP JOINT (FES Response)", height=200, margin=dict(t=30, b=10))
+        st.plotly_chart(fig_fes_hip)
