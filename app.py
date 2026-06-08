@@ -34,14 +34,25 @@ if uploaded_file is not None:
     try:
         content = uploaded_file.getvalue().decode("utf-8")
         
-        # FIX: Tell pandas there is no header row in this file
+        # Read the raw data without assuming column headers
         df = pd.read_csv(io.StringIO(content), sep=r'\s+', header=None)
         
-        # FIX: Explicitly assign the correct column names 
-        df.columns = [
-            'L_Knee', 'L_Ankle', 'R_Knee', 'R_Ankle', 
-            'L_Foot_Acc_Z', 'L_Foot_Acc_Y', 'R_Foot_Acc_Z', 'R_Foot_Acc_Y', 'Label'
-        ]
+        # Map specific column positions to their actual names
+        # Assuming CH1-CH8 are the first 8 columns (index 0-7) 
+        # and the Label is the very last column
+        last_col_idx = len(df.columns) - 1
+        rename_map = {
+            0: 'L_Knee',
+            1: 'L_Ankle',
+            2: 'R_Knee',
+            3: 'R_Ankle',
+            4: 'L_Foot_Acc_Z',
+            5: 'L_Foot_Acc_Y',
+            6: 'R_Foot_Acc_Z',
+            7: 'R_Foot_Acc_Y',
+            last_col_idx: 'Label'
+        }
+        df.rename(columns=rename_map, inplace=True)
 
         # Generate a Time column (assumes 100Hz sampling rate)
         df['Time'] = np.arange(len(df)) * 0.01
@@ -63,7 +74,7 @@ with tab1:
         
         with param_col:
             st.subheader("Parameters")
-            st.info("Temporal parameter calculations (IC, FF, HO) require Heel/Toe sensor data, which is not present in this dataset. Currently displaying full dataset.")
+            st.info("Temporal parameter calculations require Heel/Toe sensor data, which is not present. Displaying full dataset.")
             
             st.markdown("**Knee Joint Parameters**")
             if 'L_Knee' in df.columns:
