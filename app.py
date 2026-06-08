@@ -12,62 +12,11 @@ def manual_lpf(data_series, alpha):
         filtered.append(val)
     return filtered
 
-def process_gait_cycles(df):
-    if 'Heel' not in df.columns or 'Toe' not in df.columns:
-        return []
-        
-    heel_diff = df['Heel'].diff()
-    toe_diff = df['Toe'].diff()
-    ic_indices = df.index[heel_diff == 1].tolist()
-
-    cycles = []
-    for i in range(len(ic_indices) - 1):
-        start = ic_indices[i]
-        end = ic_indices[i+1]
-        cycle_df = df.loc[start:end-1].copy()
-
-        time_start = df.loc[start, 'Time']
-        t_cycle = df.loc[end, 'Time'] - time_start
-
-        if t_cycle <= 0: continue
-
-        cycle_df['GaitCycle'] = ((cycle_df['Time'] - time_start) / t_cycle) * 100
-
-        to_idx_list = cycle_df.index[toe_diff.loc[start:end-1] == -1].tolist()
-        ff_idx_list = cycle_df.index[toe_diff.loc[start:end-1] == 1].tolist()
-        ho_idx_list = cycle_df.index[heel_diff.loc[start:end-1] == -1].tolist()
-
-        to_idx = to_idx_list[0] if to_idx_list else None
-        ff_idx = ff_idx_list[0] if ff_idx_list else None
-        ho_idx = ho_idx_list[0] if ho_idx_list else None
-
-        if to_idx is not None:
-            t_to = df.loc[to_idx, 'Time'] - time_start
-            p_to = (t_to / t_cycle) * 100
-            p_ff = ((df.loc[ff_idx, 'Time'] - time_start) / t_cycle * 100) if ff_idx else 0
-            p_ho = ((df.loc[ho_idx, 'Time'] - time_start) / t_cycle * 100) if ho_idx else 0
-
-            cycles.append({
-                'label': f"Siklus ke - {len(cycles) + 1}",
-                'df': cycle_df,
-                't_cycle': t_cycle,
-                'ic_pct': 0.0,
-                'ff_pct': p_ff,
-                'ho_pct': p_ho,
-                'to_pct': p_to,
-                't_stance': p_to,
-                't_swing': 100 - p_to,
-                'cadence': 120 / t_cycle
-            })
-    return cycles
-
 st.set_page_config(page_title="Wearable FES-Gait System", layout="wide")
-st.title("Wearable FES-Gait System Graphical User Interface")
+st.title("Wearable FES-Gait System Dashboard")
 
 if 'sensor_data' not in st.session_state:
     st.session_state['sensor_data'] = None
-if 'cycles' not in st.session_state:
-    st.session_state['cycles'] = []
 
 with st.sidebar:
     st.header("Data Management")
@@ -75,7 +24,6 @@ with st.sidebar:
     
     if st.button("Clear Data"):
         st.session_state['sensor_data'] = None
-        st.session_state['cycles'] = []
         st.rerun()
         
     st.divider()
@@ -85,76 +33,82 @@ with st.sidebar:
 if uploaded_file is not None:
     try:
         content = uploaded_file.getvalue().decode("utf-8")
-        lines = content.split('\n')
-        header_idx = 0
-        for i, line in enumerate(lines):
-            if line.startswith('Time'):
-                header_idx = i
-                break
-        df = pd.read_csv(io.StringIO(content), sep=r'\s+', skiprows=header_idx)
+        
+        # Read the data (header is on the first line, delimited by whitespace)
+        df = pd.read_csv(io.StringIO(content), sep=r'\s+')
+        
+        # Rename columns based on "Info of flat3 data.txt"
+        column_mapping = {
+            'CH1': 'L_Knee',
+            'CH2': 'L_Ankle',
+            'CH3': 'R_Knee',
+            'CH4': 'R_Ankle',
+            'CH5': 'L_Foot_Acc_Z',
+            'CH6': 'L_Foot_Acc_Y',
+            'CH7': 'R_Foot_Acc_Z',
+            'CH8': 'R_Foot_Acc_Y'
+        }
+        df.rename(columns=column_mapping, inplace=True)
+        
         st.session_state['sensor_data'] = df
-        st.session_state['cycles'] = process_gait_cycles(df)
+        st.sidebar.success(f"Loaded: {uploaded_file.name}")
     except Exception as e:
-        pass
+        st.sidebar.error(f"Error parsing file: {e}")
 
 tab1, tab2 = st.tabs(["SENSOR SYSTEM (Gait Analysis)", "OPEN-LOOP FES SYSTEM"])
 
 with tab1:
-    if st.session_state['sensor_data'] is not None and st.session_state['cycles']:
-        cycles = st.session_state['cycles']
-        cycle_labels = [c['label'] for c in cycles]
+    if st.session_state['sensor_data'] is not None:
+        df = st.session_state['sensor_data']
         
         plot_col, param_col = st.columns([2, 1])
         
         with param_col:
             st.subheader("Parameters")
-            selected_label = st.selectbox("CYCLE", cycle_labels)
-            sel_cycle = next(c for c in cycles if c['label'] == selected_label)
-            sel_df = sel_cycle['df']
+            st.info("Temporal parameter calculations (IC, FF, HO) require Heel/Toe sensor data, which is not present in this dataset. Currently displaying full dataset.")
             
-            st.markdown("**Temporal Parameters**")
-            col_t1, col_t2 = st.columns(2)
-            col_t1.metric("IC [%time]", f"{sel_cycle['ic_pct']:.1f}")
-            col_t1.metric("FF [%time]", f"{sel_cycle['ff_pct']:.1f}")
-            col_t1.metric("HO [%time]", f"{sel_cycle['ho_pct']:.1f}")
-            col_t2.metric("Tstance [%time]", f"{sel_cycle['t_stance']:.1f}")
-            col_t2.metric("Tswing [%time]", f"{sel_cycle['t_swing']:.1f}")
-            col_t2.metric("Tcycle [s]", f"{sel_cycle['t_cycle']:.2f}")
-            col_t2.metric("Cad [strd/min]", f"{sel_cycle['cadence']:.1f}")
-            
-            st.divider()
-            st.markdown("**Hip Joint Parameters**")
-            st.metric("HIC [deg]", f"{sel_df['HipKal'].iloc[0]:.1f}" if 'HipKal' in sel_df else "0.0")
-            
-            st.divider()
             st.markdown("**Knee Joint Parameters**")
-            st.metric("KIC [deg]", f"{sel_df['KneeKal'].iloc[0]:.1f}" if 'KneeKal' in sel_df else "0.0")
+            if 'L_Knee' in df.columns:
+                st.metric("Max L_Knee Flexion [deg]", f"{df['L_Knee'].max():.1f}")
+            if 'R_Knee' in df.columns:
+                st.metric("Max R_Knee Flexion [deg]", f"{df['R_Knee'].max():.1f}")
+                
+            st.divider()
+            st.markdown("**Ankle Joint Parameters**")
+            if 'L_Ankle' in df.columns:
+                st.metric("Max L_Ankle Dorsiflexion [deg]", f"{df['L_Ankle'].max():.1f}")
+            if 'R_Ankle' in df.columns:
+                st.metric("Max R_Ankle Dorsiflexion [deg]", f"{df['R_Ankle'].max():.1f}")
 
         with plot_col:
-            st.subheader(f"Gait Analysis Plots ({selected_label})")
+            st.subheader("Gait Analysis Plots (Full Record)")
             
-            x_axis = sel_df['GaitCycle']
+            x_axis = df['Time']
             
-            if 'HipKal' in sel_df.columns:
-                fig_hip = go.Figure()
-                fig_hip.add_trace(go.Scatter(x=x_axis, y=sel_df['HipKal'], name='Raw', line=dict(color='lightgray')))
-                fig_hip.add_trace(go.Scatter(x=x_axis, y=manual_lpf(sel_df['HipKal'], alpha_val), name='LPF', line=dict(color='red')))
-                fig_hip.update_layout(title="HIP JOINT", xaxis_title="gait cycle [%]", yaxis_title="Deg", height=250, margin=dict(t=30, b=10))
-                st.plotly_chart(fig_hip, use_container_width=True)
-
-            if 'KneeKal' in sel_df.columns:
+            # KNEE PLOT
+            if 'L_Knee' in df.columns and 'R_Knee' in df.columns:
                 fig_knee = go.Figure()
-                fig_knee.add_trace(go.Scatter(x=x_axis, y=sel_df['KneeKal'], name='Raw', line=dict(color='lightgray')))
-                fig_knee.add_trace(go.Scatter(x=x_axis, y=manual_lpf(sel_df['KneeKal'], alpha_val), name='LPF', line=dict(color='blue')))
-                fig_knee.update_layout(title="KNEE JOINT", xaxis_title="gait cycle [%]", yaxis_title="Deg", height=250, margin=dict(t=30, b=10))
+                fig_knee.add_trace(go.Scatter(x=x_axis, y=df['L_Knee'], name='Left Knee (Raw)', line=dict(color='lightgray')))
+                fig_knee.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['L_Knee'], alpha_val), name='Left Knee (LPF)', line=dict(color='blue')))
+                fig_knee.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['R_Knee'], alpha_val), name='Right Knee (LPF)', line=dict(color='orange', dash='dot')))
+                fig_knee.update_layout(title="KNEE JOINT", xaxis_title="Time (s)", yaxis_title="Deg", height=300, margin=dict(t=30, b=10))
                 st.plotly_chart(fig_knee, use_container_width=True)
 
-            if 'AnkleKal' in sel_df.columns:
+            # ANKLE PLOT
+            if 'L_Ankle' in df.columns and 'R_Ankle' in df.columns:
                 fig_ankle = go.Figure()
-                fig_ankle.add_trace(go.Scatter(x=x_axis, y=sel_df['AnkleKal'], name='Raw', line=dict(color='lightgray')))
-                fig_ankle.add_trace(go.Scatter(x=x_axis, y=manual_lpf(sel_df['AnkleKal'], alpha_val), name='LPF', line=dict(color='green')))
-                fig_ankle.update_layout(title="ANKLE JOINT", xaxis_title="gait cycle [%]", yaxis_title="Deg", height=250, margin=dict(t=30, b=10))
+                fig_ankle.add_trace(go.Scatter(x=x_axis, y=df['L_Ankle'], name='Left Ankle (Raw)', line=dict(color='lightgray')))
+                fig_ankle.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['L_Ankle'], alpha_val), name='Left Ankle (LPF)', line=dict(color='green')))
+                fig_ankle.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['R_Ankle'], alpha_val), name='Right Ankle (LPF)', line=dict(color='purple', dash='dot')))
+                fig_ankle.update_layout(title="ANKLE JOINT", xaxis_title="Time (s)", yaxis_title="Deg", height=300, margin=dict(t=30, b=10))
                 st.plotly_chart(fig_ankle, use_container_width=True)
+                
+            # GAIT PHASE (LABEL) PLOT
+            if 'Label' in df.columns:
+                fig_label = go.Figure()
+                fig_label.add_trace(go.Scatter(x=x_axis, y=df['Label'], name='Gait Label', line=dict(color='red', shape='hv')))
+                fig_label.update_layout(title="GAIT PHASE (Label)", xaxis_title="Time (s)", yaxis_title="Phase ID", height=200, margin=dict(t=30, b=10))
+                st.plotly_chart(fig_label, use_container_width=True)
 
 with tab2:
     st.subheader("Open-Loop FES Configuration")
