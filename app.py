@@ -33,23 +33,18 @@ with st.sidebar:
 if uploaded_file is not None:
     try:
         content = uploaded_file.getvalue().decode("utf-8")
-        df = pd.read_csv(io.StringIO(content), sep=r'\s+')
         
-        column_mapping = {
-            'CH1': 'L_Knee',
-            'CH2': 'L_Ankle',
-            'CH3': 'R_Knee',
-            'CH4': 'R_Ankle',
-            'CH5': 'L_Foot_Acc_Z',
-            'CH6': 'L_Foot_Acc_Y',
-            'CH7': 'R_Foot_Acc_Z',
-            'CH8': 'R_Foot_Acc_Y'
-        }
-        df.rename(columns=column_mapping, inplace=True)
+        # FIX: Tell pandas there is no header row in this file
+        df = pd.read_csv(io.StringIO(content), sep=r'\s+', header=None)
+        
+        # FIX: Explicitly assign the correct column names 
+        df.columns = [
+            'L_Knee', 'L_Ankle', 'R_Knee', 'R_Ankle', 
+            'L_Foot_Acc_Z', 'L_Foot_Acc_Y', 'R_Foot_Acc_Z', 'R_Foot_Acc_Y', 'Label'
+        ]
 
-        # Fix: Generate a Time column if missing (assumes 100Hz sampling rate)
-        if 'Time' not in df.columns:
-            df['Time'] = np.arange(len(df)) * 0.01
+        # Generate a Time column (assumes 100Hz sampling rate)
+        df['Time'] = np.arange(len(df)) * 0.01
         
         st.session_state['sensor_data'] = df
         st.sidebar.success(f"Loaded: {uploaded_file.name}")
