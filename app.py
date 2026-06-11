@@ -4,7 +4,16 @@ import numpy as np
 import plotly.graph_objects as go
 import io
 
+# --- Custom Signal Processing Functions ---
+
+def manual_rectify(data_series):
+    """Manually rectifies the signal by converting negative values to positive (Absolute Value)"""
+    data = pd.to_numeric(data_series, errors='coerce').fillna(0)
+    # Apply manual absolute value logic
+    return data.apply(lambda x: x if x >= 0 else -x)
+
 def manual_lpf(data_series, alpha, order):
+    """Applies a manual IIR Low Pass Filter (Cascaded for higher orders)"""
     data = pd.to_numeric(data_series, errors='coerce').fillna(0).tolist()
     if not data: return []
     
@@ -17,6 +26,8 @@ def manual_lpf(data_series, alpha, order):
         current_data = filtered
         
     return current_data
+
+# --- Streamlit Application ---
 
 st.set_page_config(page_title="Wearable FES-Gait System", layout="wide")
 st.title("Wearable FES-Gait System Dashboard")
@@ -101,26 +112,29 @@ with tab1:
             st.plotly_chart(fig_joints, use_container_width=True)
 
             st.divider()
-            st.subheader("EMG Signals (Raw vs LPF)")
+            st.subheader("EMG Signals (Raw vs Envelope)")
 
             # EMG 1: GLUTEUS MAXIMUS
+            rectified_gmax = manual_rectify(df['Gluteus_Maximus'])
             fig_gmax = go.Figure()
-            fig_gmax.add_trace(go.Scatter(x=x_axis, y=df['Gluteus_Maximus'], name='Raw', line=dict(color='lightgray')))
-            fig_gmax.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['Gluteus_Maximus'], alpha_val, filter_order), name='LPF', line=dict(color='purple')))
+            fig_gmax.add_trace(go.Scatter(x=x_axis, y=df['Gluteus_Maximus'], name='Raw Bipolar', line=dict(color='lightgray')))
+            fig_gmax.add_trace(go.Scatter(x=x_axis, y=manual_lpf(rectified_gmax, alpha_val, filter_order), name='Linear Envelope (LPF)', line=dict(color='purple', width=2)))
             fig_gmax.update_layout(title="GLUTEUS MAXIMUS (EMG)", xaxis_title="Time (s)", yaxis_title="Amplitude", height=250, margin=dict(t=30, b=10))
             st.plotly_chart(fig_gmax, use_container_width=True)
 
             # EMG 2: BICEPS FEMORIS SHORT
+            rectified_bfs = manual_rectify(df['Biceps_Femoris_Short'])
             fig_bfs = go.Figure()
-            fig_bfs.add_trace(go.Scatter(x=x_axis, y=df['Biceps_Femoris_Short'], name='Raw', line=dict(color='lightgray')))
-            fig_bfs.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['Biceps_Femoris_Short'], alpha_val, filter_order), name='LPF', line=dict(color='orange')))
+            fig_bfs.add_trace(go.Scatter(x=x_axis, y=df['Biceps_Femoris_Short'], name='Raw Bipolar', line=dict(color='lightgray')))
+            fig_bfs.add_trace(go.Scatter(x=x_axis, y=manual_lpf(rectified_bfs, alpha_val, filter_order), name='Linear Envelope (LPF)', line=dict(color='orange', width=2)))
             fig_bfs.update_layout(title="BICEPS FEMORIS SHORT (EMG)", xaxis_title="Time (s)", yaxis_title="Amplitude", height=250, margin=dict(t=30, b=10))
             st.plotly_chart(fig_bfs, use_container_width=True)
 
             # EMG 3: BICEPS FEMORIS LONG
+            rectified_bfl = manual_rectify(df['Biceps_Femoris_Long'])
             fig_bfl = go.Figure()
-            fig_bfl.add_trace(go.Scatter(x=x_axis, y=df['Biceps_Femoris_Long'], name='Raw', line=dict(color='lightgray')))
-            fig_bfl.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['Biceps_Femoris_Long'], alpha_val, filter_order), name='LPF', line=dict(color='cyan')))
+            fig_bfl.add_trace(go.Scatter(x=x_axis, y=df['Biceps_Femoris_Long'], name='Raw Bipolar', line=dict(color='lightgray')))
+            fig_bfl.add_trace(go.Scatter(x=x_axis, y=manual_lpf(rectified_bfl, alpha_val, filter_order), name='Linear Envelope (LPF)', line=dict(color='cyan', width=2)))
             fig_bfl.update_layout(title="BICEPS FEMORIS LONG (EMG)", xaxis_title="Time (s)", yaxis_title="Amplitude", height=250, margin=dict(t=30, b=10))
             st.plotly_chart(fig_bfl, use_container_width=True)
             
@@ -143,15 +157,4 @@ with tab2:
         st.number_input("Rectus", value=500)
         st.markdown("*Knee Flexion*")
         st.number_input("BFLH", value=500)
-        st.number_input("BFSH", value=500)
-        st.number_input("Gastroc (KF)", value=500)
-        st.button("START FES")
-        st.button("STOP FES")
-
-    with fes_plot_col:
-        fig_boost = go.Figure()
-        fig_boost.update_layout(title="Boost Voltage", height=200, margin=dict(t=30, b=10))
-        st.plotly_chart(fig_boost)
-        fig_fes_hip = go.Figure()
-        fig_fes_hip.update_layout(title="HIP JOINT (FES Response)", height=200, margin=dict(t=30, b=10))
-        st.plotly_chart(fig_fes_hip)
+        st.number_input("BFSH", value
