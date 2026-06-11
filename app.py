@@ -54,6 +54,11 @@ with st.sidebar:
     alpha_val = dt / (rc + dt)
     
     st.caption(f"Calculated internal \u03B1: {alpha_val:.4f}")
+    
+    st.divider()
+    st.header("Activation Threshold")
+    threshold_pct = st.slider("Threshold (% of Max)", min_value=1.0, max_value=30.0, value=5.0, step=0.5,
+                              help="Signal values above this percentage of the muscle's maximum are plotted as 'Active'.")
 
 if uploaded_file is not None:
     try:
@@ -119,28 +124,83 @@ with tab1:
         # EMG MENU
         # ==========================================
         with emg_tab:
-            st.subheader("EMG Signals (Raw vs Envelope)")
-
-            # List of all EMG columns (7 through 15)
             emg_muscles = [
                 'Gluteus_Maximus', 'Biceps_Femoris_Short', 'Biceps_Femoris_Long',
                 'Vastus_Medialis', 'Vastus_Lateralis', 'Rectus_Femoris',
                 'Soleus', 'Gastrocnemius', 'Tibialis_Anterior'
             ]
+
+            # --- 1. MUSCLE ACTIVATION TIMING CHART (ON/OFF) ---
+            st.subheader("Muscle Activation Timing")
+            st.markdown(f"*(Blocks indicate muscle envelope exceeds {threshold_pct}% of its maximum)*")
             
-            # Loop through all muscles to generate their plots automatically
-            for muscle in emg_muscles:
+            fig_timing = go.Figure()
+            # Reverse the list so the first muscle appears at the top of the y-axis
+            emg_muscles_reversed = list(reversed(emg_muscles))
+            
+            for i, muscle in enumerate(emg_muscles_reversed):
                 rectified_data = manual_rectify(df[muscle])
-                filtered_data = manual_lpf(rectified_data, alpha_val, filter_order)
+                envelope = manual_lpf(rectified_data, alpha_val, filter_order)
                 
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=x_axis, y=df[muscle], name='Raw Bipolar', line=dict(color='lightgray')))
-                fig.add_trace(go.Scatter(x=x_axis, y=filtered_data, name='Linear Envelope (LPF)', line=dict(width=2)))
+                # Calculate the activation threshold
+                max_val = max(envelope) if envelope else 0
+                threshold = (threshold_pct / 100.0) * max_val
                 
-                # Format the title nicely (e.g., "VASTUS MEDIALIS (EMG)")
-                display_name = muscle.replace('_', ' ').upper()
-                fig.update_layout(title=f"{display_name} (EMG)", xaxis_title="Time (s)", yaxis_title="Amplitude", height=250, margin=dict(t=30, b=10))
-                st.plotly_chart(fig, use_container_width=True)
+                # Map to Y-index if active, else np.nan to break the line
+                active_state = [i if val >= threshold else np.nan for val in envelope]
+                
+                fig_timing.add_trace(go.Scatter(
+                    x=x_axis, 
+                    y=active_state, 
+                    mode='lines', 
+                    name=muscle.replace('_', ' '),
+                    line=dict(width=15), # Thick line mimics a Gantt bar
+                    hoverinfo='name+x'
+                ))
+
+            fig_timing.update_layout(
+                xaxis_title="Time (s)",
+                yaxis=dict(
+                    tickmode='array',
+                    tickvals=list(range(len(emg_muscles_reversed))),
+                    ticktext=[m.replace('_', ' ').upper() for m in emg_muscles_reversed],
+                    showgrid=False,
+                    zeroline=False
+                ),
+                height=450,
+                margin=dict(t=30, b=10, l=150),
+                showlegend=False
+            )
+            st.plotly_chart(fig_timing, use_container_width=True)
+            
+            st.divider()
+
+            # --- 2. DETAILED RAW VS ENVELOPE CHARTS ---
+            st.subheader("Individual Muscle Envelopes")
+            
+            # Use columns to lay them out efficiently (3 columns wide)
+            cols = st.columns(3)
+            
+            for index, muscle in enumerate(emg_muscles):
+                col = cols[index % 3] # Distribute across the 3 columns
+                with col:
+                    rectified_data = manual_rectify(df[muscle])
+                    filtered_data = manual_lpf(rectified_data, alpha_val, filter_order)
+                    
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=x_axis, y=df[muscle], name='Raw', line=dict(color='lightgray', width=1)))
+                    fig.add_trace(go.Scatter(x=x_axis, y=filtered_data, name='Envelope', line=dict(width=2)))
+                    
+                    display_name = muscle.replace('_', ' ').upper()
+                    fig.update_layout(
+                        title=dict(text=display_name, font=dict(size=12)), 
+                        xaxis_title="Time (s)", 
+                        yaxis_title="Amp", 
+                        height=200, 
+                        margin=dict(t=30, b=10, l=10, r=10),
+                        showlegend=False
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
             
     else:
         st.info("Upload sensor data to view the Gait Analysis.")
