@@ -1,18 +1,22 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 import io
 
-def manual_lpf(data_series, alpha):
-    # Convert to list and handle potential string/NaN values gracefully
+def manual_lpf(data_series, alpha, order):
     data = pd.to_numeric(data_series, errors='coerce').fillna(0).tolist()
     if not data: return []
     
-    filtered = [data[0]] 
-    for i in range(1, len(data)):
-        val = alpha * data[i] + (1 - alpha) * filtered[-1]
-        filtered.append(val)
-    return filtered
+    current_data = data
+    for _ in range(order):
+        filtered = [current_data[0]] 
+        for i in range(1, len(current_data)):
+            val = alpha * current_data[i] + (1 - alpha) * filtered[-1]
+            filtered.append(val)
+        current_data = filtered
+        
+    return current_data
 
 st.set_page_config(page_title="Wearable FES-Gait System", layout="wide")
 st.title("Wearable FES-Gait System Dashboard")
@@ -29,26 +33,27 @@ with st.sidebar:
         st.rerun()
         
     st.divider()
-    st.header("Filter Settings")
-    alpha_val = st.slider("LPF Alpha", min_value=0.01, max_value=1.0, value=0.15, step=0.01)
+    st.header("EMG Filter Settings")
+    
+    fc = st.slider("Cut-off Frequency (Hz)", min_value=0.1, max_value=20.0, value=3.0, step=0.1)
+    filter_order = st.slider("Filter Order (Passes)", min_value=1, max_value=5, value=1, step=1)
+    
+    dt = 0.01 
+    rc = 1.0 / (2 * np.pi * fc)
+    alpha_val = dt / (rc + dt)
+    
+    st.caption(f"Calculated internal \u03B1: {alpha_val:.4f}")
 
 if uploaded_file is not None:
     try:
         content = uploaded_file.getvalue().decode("utf-8")
-        
-        # Read raw data, allowing pandas to handle multiple spaces
         df = pd.read_csv(io.StringIO(content), sep=r'\s+', header=None)
-        
-        # Drop any empty columns that might have been created by trailing spaces
         df = df.dropna(axis=1, how='all')
         
-        # Check if the file has a header row (if first item in Time is a string, skip row 0)
         if isinstance(df.iloc[0, 0], str) and not df.iloc[0, 0].replace('.','',1).isdigit():
             df = df.iloc[1:].reset_index(drop=True)
             
-        # Ensure we only apply this to exactly 15 columns
         if len(df.columns) >= 15:
-            # Take only the first 15 columns in case of trailing delimiters
             df = df.iloc[:, :15] 
             df.columns = [
                 'Time', 'Heel', 'Toe', 'Hip', 'Knee', 'Ankle', 
@@ -57,7 +62,6 @@ if uploaded_file is not None:
                 'Soleus', 'Gastrocnemius', 'Tibialis_Anterior'
             ]
             
-            # Convert all columns to numeric, forcing any weird text to NaN, then to 0
             df = df.apply(pd.to_numeric, errors='coerce').fillna(0)
             
             st.session_state['sensor_data'] = df
@@ -85,29 +89,40 @@ with tab1:
             st.metric("Max Ankle Angle [deg]", f"{df['Ankle'].max():.1f}")
 
         with plot_col:
-            st.subheader("Kinematic Joint Plots")
+            st.subheader("Kinematic Joint Angles")
             x_axis = df['Time']
             
-            # 1. HIP PLOT
-            fig_hip = go.Figure()
-            fig_hip.add_trace(go.Scatter(x=x_axis, y=df['Hip'], name='Raw', line=dict(color='lightgray')))
-            fig_hip.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['Hip'], alpha_val), name='LPF', line=dict(color='red')))
-            fig_hip.update_layout(title="HIP JOINT", xaxis_title="Time (s)", yaxis_title="Angle (Deg)", height=250, margin=dict(t=30, b=10))
-            st.plotly_chart(fig_hip)
+            # COMBINED JOINT PLOT (RAW ONLY)
+            fig_joints = go.Figure()
+            fig_joints.add_trace(go.Scatter(x=x_axis, y=df['Hip'], name='Hip', line=dict(color='red')))
+            fig_joints.add_trace(go.Scatter(x=x_axis, y=df['Knee'], name='Knee', line=dict(color='blue')))
+            fig_joints.add_trace(go.Scatter(x=x_axis, y=df['Ankle'], name='Ankle', line=dict(color='green')))
+            fig_joints.update_layout(title="LOWER LIMB JOINTS (Raw)", xaxis_title="Time (s)", yaxis_title="Angle (Deg)", height=350, margin=dict(t=30, b=10))
+            st.plotly_chart(fig_joints, use_container_width=True)
 
-            # 2. KNEE PLOT
-            fig_knee = go.Figure()
-            fig_knee.add_trace(go.Scatter(x=x_axis, y=df['Knee'], name='Raw', line=dict(color='lightgray')))
-            fig_knee.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['Knee'], alpha_val), name='LPF', line=dict(color='blue')))
-            fig_knee.update_layout(title="KNEE JOINT", xaxis_title="Time (s)", yaxis_title="Angle (Deg)", height=250, margin=dict(t=30, b=10))
-            st.plotly_chart(fig_knee)
+            st.divider()
+            st.subheader("EMG Signals (Raw vs LPF)")
 
-            # 3. ANKLE PLOT
-            fig_ankle = go.Figure()
-            fig_ankle.add_trace(go.Scatter(x=x_axis, y=df['Ankle'], name='Raw', line=dict(color='lightgray')))
-            fig_ankle.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['Ankle'], alpha_val), name='LPF', line=dict(color='green')))
-            fig_ankle.update_layout(title="ANKLE JOINT", xaxis_title="Time (s)", yaxis_title="Angle (Deg)", height=250, margin=dict(t=30, b=10))
-            st.plotly_chart(fig_ankle)
+            # EMG 1: GLUTEUS MAXIMUS
+            fig_gmax = go.Figure()
+            fig_gmax.add_trace(go.Scatter(x=x_axis, y=df['Gluteus_Maximus'], name='Raw', line=dict(color='lightgray')))
+            fig_gmax.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['Gluteus_Maximus'], alpha_val, filter_order), name='LPF', line=dict(color='purple')))
+            fig_gmax.update_layout(title="GLUTEUS MAXIMUS (EMG)", xaxis_title="Time (s)", yaxis_title="Amplitude", height=250, margin=dict(t=30, b=10))
+            st.plotly_chart(fig_gmax, use_container_width=True)
+
+            # EMG 2: BICEPS FEMORIS SHORT
+            fig_bfs = go.Figure()
+            fig_bfs.add_trace(go.Scatter(x=x_axis, y=df['Biceps_Femoris_Short'], name='Raw', line=dict(color='lightgray')))
+            fig_bfs.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['Biceps_Femoris_Short'], alpha_val, filter_order), name='LPF', line=dict(color='orange')))
+            fig_bfs.update_layout(title="BICEPS FEMORIS SHORT (EMG)", xaxis_title="Time (s)", yaxis_title="Amplitude", height=250, margin=dict(t=30, b=10))
+            st.plotly_chart(fig_bfs, use_container_width=True)
+
+            # EMG 3: BICEPS FEMORIS LONG
+            fig_bfl = go.Figure()
+            fig_bfl.add_trace(go.Scatter(x=x_axis, y=df['Biceps_Femoris_Long'], name='Raw', line=dict(color='lightgray')))
+            fig_bfl.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['Biceps_Femoris_Long'], alpha_val, filter_order), name='LPF', line=dict(color='cyan')))
+            fig_bfl.update_layout(title="BICEPS FEMORIS LONG (EMG)", xaxis_title="Time (s)", yaxis_title="Amplitude", height=250, margin=dict(t=30, b=10))
+            st.plotly_chart(fig_bfl, use_container_width=True)
             
     else:
         st.info("Upload sensor data to view the Gait Analysis.")
