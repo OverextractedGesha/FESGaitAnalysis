@@ -1,11 +1,13 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 import io
 
 def manual_lpf(data_series, alpha):
-    data = data_series.tolist()
+    # Convert to list and handle potential string/NaN values gracefully
+    data = pd.to_numeric(data_series, errors='coerce').fillna(0).tolist()
+    if not data: return []
+    
     filtered = [data[0]] 
     for i in range(1, len(data)):
         val = alpha * data[i] + (1 - alpha) * filtered[-1]
@@ -34,31 +36,35 @@ if uploaded_file is not None:
     try:
         content = uploaded_file.getvalue().decode("utf-8")
         
-        # Read the raw data without assuming column headers
+        # Read raw data, allowing pandas to handle multiple spaces
         df = pd.read_csv(io.StringIO(content), sep=r'\s+', header=None)
         
-        # Map specific column positions to their actual names
-        # Assuming CH1-CH8 are the first 8 columns (index 0-7) 
-        # and the Label is the very last column
-        last_col_idx = len(df.columns) - 1
-        rename_map = {
-            0: 'L_Knee',
-            1: 'L_Ankle',
-            2: 'R_Knee',
-            3: 'R_Ankle',
-            4: 'L_Foot_Acc_Z',
-            5: 'L_Foot_Acc_Y',
-            6: 'R_Foot_Acc_Z',
-            7: 'R_Foot_Acc_Y',
-            last_col_idx: 'Label'
-        }
-        df.rename(columns=rename_map, inplace=True)
-
-        # Generate a Time column (assumes 100Hz sampling rate)
-        df['Time'] = np.arange(len(df)) * 0.01
+        # Drop any empty columns that might have been created by trailing spaces
+        df = df.dropna(axis=1, how='all')
         
-        st.session_state['sensor_data'] = df
-        st.sidebar.success(f"Loaded: {uploaded_file.name}")
+        # Check if the file has a header row (if first item in Time is a string, skip row 0)
+        if isinstance(df.iloc[0, 0], str) and not df.iloc[0, 0].replace('.','',1).isdigit():
+            df = df.iloc[1:].reset_index(drop=True)
+            
+        # Ensure we only apply this to exactly 15 columns
+        if len(df.columns) >= 15:
+            # Take only the first 15 columns in case of trailing delimiters
+            df = df.iloc[:, :15] 
+            df.columns = [
+                'Time', 'Heel', 'Toe', 'Hip', 'Knee', 'Ankle', 
+                'Gluteus_Maximus', 'Biceps_Femoris_Short', 'Biceps_Femoris_Long', 
+                'Vastus_Medialis', 'Vastus_Lateralis', 'Rectus_Femoris', 
+                'Soleus', 'Gastrocnemius', 'Tibialis_Anterior'
+            ]
+            
+            # Convert all columns to numeric, forcing any weird text to NaN, then to 0
+            df = df.apply(pd.to_numeric, errors='coerce').fillna(0)
+            
+            st.session_state['sensor_data'] = df
+            st.sidebar.success(f"Loaded: {uploaded_file.name}")
+        else:
+            st.sidebar.error(f"Data format mismatch. Found {len(df.columns)} columns, expected 15.")
+            
     except Exception as e:
         st.sidebar.error(f"Error parsing file: {e}")
 
@@ -73,49 +79,38 @@ with tab1:
         plot_col, param_col = st.columns([2, 1])
         
         with param_col:
-            st.subheader("Parameters")
-            st.info("Temporal parameter calculations require Heel/Toe sensor data, which is not present. Displaying full dataset.")
-            
-            st.markdown("**Knee Joint Parameters**")
-            if 'L_Knee' in df.columns:
-                st.metric("Max L_Knee Flexion [deg]", f"{df['L_Knee'].max():.1f}")
-            if 'R_Knee' in df.columns:
-                st.metric("Max R_Knee Flexion [deg]", f"{df['R_Knee'].max():.1f}")
-                
-            st.divider()
-            st.markdown("**Ankle Joint Parameters**")
-            if 'L_Ankle' in df.columns:
-                st.metric("Max L_Ankle Dorsiflexion [deg]", f"{df['L_Ankle'].max():.1f}")
-            if 'R_Ankle' in df.columns:
-                st.metric("Max R_Ankle Dorsiflexion [deg]", f"{df['R_Ankle'].max():.1f}")
+            st.subheader("Joint Parameters")
+            st.metric("Max Hip Angle [deg]", f"{df['Hip'].max():.1f}")
+            st.metric("Max Knee Angle [deg]", f"{df['Knee'].max():.1f}")
+            st.metric("Max Ankle Angle [deg]", f"{df['Ankle'].max():.1f}")
 
         with plot_col:
-            st.subheader("Gait Analysis Plots (Full Record)")
+            st.subheader("Kinematic Joint Plots")
             x_axis = df['Time']
             
-            if 'L_Knee' in df.columns and 'R_Knee' in df.columns:
-                fig_knee = go.Figure()
-                fig_knee.add_trace(go.Scatter(x=x_axis, y=df['L_Knee'], name='Left Knee (Raw)', line=dict(color='lightgray')))
-                fig_knee.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['L_Knee'], alpha_val), name='Left Knee (LPF)', line=dict(color='blue')))
-                fig_knee.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['R_Knee'], alpha_val), name='Right Knee (LPF)', line=dict(color='orange', dash='dot')))
-                fig_knee.update_layout(title="KNEE JOINT", xaxis_title="Time (s) [Assumed 100Hz]", yaxis_title="Deg", height=300, margin=dict(t=30, b=10))
-                st.plotly_chart(fig_knee)
+            # 1. HIP PLOT
+            fig_hip = go.Figure()
+            fig_hip.add_trace(go.Scatter(x=x_axis, y=df['Hip'], name='Raw', line=dict(color='lightgray')))
+            fig_hip.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['Hip'], alpha_val), name='LPF', line=dict(color='red')))
+            fig_hip.update_layout(title="HIP JOINT", xaxis_title="Time (s)", yaxis_title="Angle (Deg)", height=250, margin=dict(t=30, b=10))
+            st.plotly_chart(fig_hip)
 
-            if 'L_Ankle' in df.columns and 'R_Ankle' in df.columns:
-                fig_ankle = go.Figure()
-                fig_ankle.add_trace(go.Scatter(x=x_axis, y=df['L_Ankle'], name='Left Ankle (Raw)', line=dict(color='lightgray')))
-                fig_ankle.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['L_Ankle'], alpha_val), name='Left Ankle (LPF)', line=dict(color='green')))
-                fig_ankle.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['R_Ankle'], alpha_val), name='Right Ankle (LPF)', line=dict(color='purple', dash='dot')))
-                fig_ankle.update_layout(title="ANKLE JOINT", xaxis_title="Time (s) [Assumed 100Hz]", yaxis_title="Deg", height=300, margin=dict(t=30, b=10))
-                st.plotly_chart(fig_ankle)
-                
-            if 'Label' in df.columns:
-                fig_label = go.Figure()
-                fig_label.add_trace(go.Scatter(x=x_axis, y=df['Label'], name='Gait Label', line=dict(color='red', shape='hv')))
-                fig_label.update_layout(title="GAIT PHASE (Label)", xaxis_title="Time (s) [Assumed 100Hz]", yaxis_title="Phase ID", height=200, margin=dict(t=30, b=10))
-                st.plotly_chart(fig_label)
+            # 2. KNEE PLOT
+            fig_knee = go.Figure()
+            fig_knee.add_trace(go.Scatter(x=x_axis, y=df['Knee'], name='Raw', line=dict(color='lightgray')))
+            fig_knee.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['Knee'], alpha_val), name='LPF', line=dict(color='blue')))
+            fig_knee.update_layout(title="KNEE JOINT", xaxis_title="Time (s)", yaxis_title="Angle (Deg)", height=250, margin=dict(t=30, b=10))
+            st.plotly_chart(fig_knee)
+
+            # 3. ANKLE PLOT
+            fig_ankle = go.Figure()
+            fig_ankle.add_trace(go.Scatter(x=x_axis, y=df['Ankle'], name='Raw', line=dict(color='lightgray')))
+            fig_ankle.add_trace(go.Scatter(x=x_axis, y=manual_lpf(df['Ankle'], alpha_val), name='LPF', line=dict(color='green')))
+            fig_ankle.update_layout(title="ANKLE JOINT", xaxis_title="Time (s)", yaxis_title="Angle (Deg)", height=250, margin=dict(t=30, b=10))
+            st.plotly_chart(fig_ankle)
+            
     else:
-        st.info("Upload sensor data to view the Sensor System.")
+        st.info("Upload sensor data to view the Gait Analysis.")
 
 with tab2:
     st.subheader("Open-Loop FES Configuration")
