@@ -48,6 +48,7 @@ with st.sidebar:
     fc = st.slider("Cut-off Frequency (Hz)", min_value=0.1, max_value=20.0, value=3.0, step=0.1)
     filter_order = st.slider("Filter Order (Passes)", min_value=1, max_value=5, value=1, step=1)
     
+    # 100Hz assumed sampling rate
     dt = 0.01 
     rc = 1.0 / (2 * np.pi * fc)
     alpha_val = dt / (rc + dt)
@@ -91,7 +92,6 @@ with tab1:
         df = st.session_state['sensor_data']
         x_axis = df['Time']
         
-        # --- SUB-MENUS FOR JOINT VS MUSCLE ANALYSIS ---
         kinematic_tab, emg_tab = st.tabs(["Kinematic (Joint) Analysis", "EMG (Muscle) Analysis"])
         
         # ==========================================
@@ -121,29 +121,26 @@ with tab1:
         with emg_tab:
             st.subheader("EMG Signals (Raw vs Envelope)")
 
-            # EMG 1: GLUTEUS MAXIMUS
-            rectified_gmax = manual_rectify(df['Gluteus_Maximus'])
-            fig_gmax = go.Figure()
-            fig_gmax.add_trace(go.Scatter(x=x_axis, y=df['Gluteus_Maximus'], name='Raw Bipolar', line=dict(color='lightgray')))
-            fig_gmax.add_trace(go.Scatter(x=x_axis, y=manual_lpf(rectified_gmax, alpha_val, filter_order), name='Linear Envelope (LPF)', line=dict(color='purple', width=2)))
-            fig_gmax.update_layout(title="GLUTEUS MAXIMUS (EMG)", xaxis_title="Time (s)", yaxis_title="Amplitude", height=250, margin=dict(t=30, b=10))
-            st.plotly_chart(fig_gmax, use_container_width=True)
-
-            # EMG 2: BICEPS FEMORIS SHORT
-            rectified_bfs = manual_rectify(df['Biceps_Femoris_Short'])
-            fig_bfs = go.Figure()
-            fig_bfs.add_trace(go.Scatter(x=x_axis, y=df['Biceps_Femoris_Short'], name='Raw Bipolar', line=dict(color='lightgray')))
-            fig_bfs.add_trace(go.Scatter(x=x_axis, y=manual_lpf(rectified_bfs, alpha_val, filter_order), name='Linear Envelope (LPF)', line=dict(color='orange', width=2)))
-            fig_bfs.update_layout(title="BICEPS FEMORIS SHORT (EMG)", xaxis_title="Time (s)", yaxis_title="Amplitude", height=250, margin=dict(t=30, b=10))
-            st.plotly_chart(fig_bfs, use_container_width=True)
-
-            # EMG 3: BICEPS FEMORIS LONG
-            rectified_bfl = manual_rectify(df['Biceps_Femoris_Long'])
-            fig_bfl = go.Figure()
-            fig_bfl.add_trace(go.Scatter(x=x_axis, y=df['Biceps_Femoris_Long'], name='Raw Bipolar', line=dict(color='lightgray')))
-            fig_bfl.add_trace(go.Scatter(x=x_axis, y=manual_lpf(rectified_bfl, alpha_val, filter_order), name='Linear Envelope (LPF)', line=dict(color='cyan', width=2)))
-            fig_bfl.update_layout(title="BICEPS FEMORIS LONG (EMG)", xaxis_title="Time (s)", yaxis_title="Amplitude", height=250, margin=dict(t=30, b=10))
-            st.plotly_chart(fig_bfl, use_container_width=True)
+            # List of all EMG columns (7 through 15)
+            emg_muscles = [
+                'Gluteus_Maximus', 'Biceps_Femoris_Short', 'Biceps_Femoris_Long',
+                'Vastus_Medialis', 'Vastus_Lateralis', 'Rectus_Femoris',
+                'Soleus', 'Gastrocnemius', 'Tibialis_Anterior'
+            ]
+            
+            # Loop through all muscles to generate their plots automatically
+            for muscle in emg_muscles:
+                rectified_data = manual_rectify(df[muscle])
+                filtered_data = manual_lpf(rectified_data, alpha_val, filter_order)
+                
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=x_axis, y=df[muscle], name='Raw Bipolar', line=dict(color='lightgray')))
+                fig.add_trace(go.Scatter(x=x_axis, y=filtered_data, name='Linear Envelope (LPF)', line=dict(width=2)))
+                
+                # Format the title nicely (e.g., "VASTUS MEDIALIS (EMG)")
+                display_name = muscle.replace('_', ' ').upper()
+                fig.update_layout(title=f"{display_name} (EMG)", xaxis_title="Time (s)", yaxis_title="Amplitude", height=250, margin=dict(t=30, b=10))
+                st.plotly_chart(fig, use_container_width=True)
             
     else:
         st.info("Upload sensor data to view the Gait Analysis.")
