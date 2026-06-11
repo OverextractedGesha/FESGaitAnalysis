@@ -157,4 +157,15 @@ with tab2:
         st.number_input("Rectus", value=500)
         st.markdown("*Knee Flexion*")
         st.number_input("BFLH", value=500)
-        st.number_input("BFSH", value
+        st.number_input("BFSH", value=500)
+        st.number_input("Gastroc (KF)", value=500)
+        st.button("START FES")
+        st.button("STOP FES")
+
+    with fes_plot_col:
+        fig_boost = go.Figure()
+        fig_boost.update_layout(title="Boost Voltage", height=200, margin=dict(t=30, b=10))
+        st.plotly_chart(fig_boost)
+        fig_fes_hip = go.Figure()
+        fig_fes_hip.update_layout(title="HIP JOINT (FES Response)", height=200, margin=dict(t=30, b=10))
+        st.plotly_chart(fig_fes_hip)
