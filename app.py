@@ -9,7 +9,6 @@ import io
 def manual_rectify(data_series):
     """Manually rectifies the signal by converting negative values to positive (Absolute Value)"""
     data = pd.to_numeric(data_series, errors='coerce').fillna(0)
-    # Apply manual absolute value logic
     return data.apply(lambda x: x if x >= 0 else -x)
 
 def manual_lpf(data_series, alpha, order):
@@ -90,28 +89,36 @@ data_exists = isinstance(st.session_state.get('sensor_data'), pd.DataFrame)
 with tab1:
     if data_exists:
         df = st.session_state['sensor_data']
+        x_axis = df['Time']
         
-        plot_col, param_col = st.columns([2, 1])
+        # --- SUB-MENUS FOR JOINT VS MUSCLE ANALYSIS ---
+        kinematic_tab, emg_tab = st.tabs(["Kinematic (Joint) Analysis", "EMG (Muscle) Analysis"])
         
-        with param_col:
-            st.subheader("Joint Parameters")
-            st.metric("Max Hip Angle [deg]", f"{df['Hip'].max():.1f}")
-            st.metric("Max Knee Angle [deg]", f"{df['Knee'].max():.1f}")
-            st.metric("Max Ankle Angle [deg]", f"{df['Ankle'].max():.1f}")
-
-        with plot_col:
-            st.subheader("Kinematic Joint Angles")
-            x_axis = df['Time']
+        # ==========================================
+        # KINEMATIC MENU
+        # ==========================================
+        with kinematic_tab:
+            plot_col, param_col = st.columns([2, 1])
             
-            # COMBINED JOINT PLOT (RAW ONLY)
-            fig_joints = go.Figure()
-            fig_joints.add_trace(go.Scatter(x=x_axis, y=df['Hip'], name='Hip', line=dict(color='red')))
-            fig_joints.add_trace(go.Scatter(x=x_axis, y=df['Knee'], name='Knee', line=dict(color='blue')))
-            fig_joints.add_trace(go.Scatter(x=x_axis, y=df['Ankle'], name='Ankle', line=dict(color='green')))
-            fig_joints.update_layout(title="LOWER LIMB JOINTS (Raw)", xaxis_title="Time (s)", yaxis_title="Angle (Deg)", height=350, margin=dict(t=30, b=10))
-            st.plotly_chart(fig_joints, use_container_width=True)
+            with param_col:
+                st.subheader("Joint Parameters")
+                st.metric("Max Hip Angle [deg]", f"{df['Hip'].max():.1f}")
+                st.metric("Max Knee Angle [deg]", f"{df['Knee'].max():.1f}")
+                st.metric("Max Ankle Angle [deg]", f"{df['Ankle'].max():.1f}")
 
-            st.divider()
+            with plot_col:
+                st.subheader("Kinematic Joint Angles")
+                fig_joints = go.Figure()
+                fig_joints.add_trace(go.Scatter(x=x_axis, y=df['Hip'], name='Hip', line=dict(color='red')))
+                fig_joints.add_trace(go.Scatter(x=x_axis, y=df['Knee'], name='Knee', line=dict(color='blue')))
+                fig_joints.add_trace(go.Scatter(x=x_axis, y=df['Ankle'], name='Ankle', line=dict(color='green')))
+                fig_joints.update_layout(title="LOWER LIMB JOINTS (Raw)", xaxis_title="Time (s)", yaxis_title="Angle (Deg)", height=350, margin=dict(t=30, b=10))
+                st.plotly_chart(fig_joints, use_container_width=True)
+
+        # ==========================================
+        # EMG MENU
+        # ==========================================
+        with emg_tab:
             st.subheader("EMG Signals (Raw vs Envelope)")
 
             # EMG 1: GLUTEUS MAXIMUS
@@ -165,7 +172,7 @@ with tab2:
     with fes_plot_col:
         fig_boost = go.Figure()
         fig_boost.update_layout(title="Boost Voltage", height=200, margin=dict(t=30, b=10))
-        st.plotly_chart(fig_boost)
+        st.plotly_chart(fig_boost, use_container_width=True)
         fig_fes_hip = go.Figure()
         fig_fes_hip.update_layout(title="HIP JOINT (FES Response)", height=200, margin=dict(t=30, b=10))
-        st.plotly_chart(fig_fes_hip)
+        st.plotly_chart(fig_fes_hip, use_container_width=True)
