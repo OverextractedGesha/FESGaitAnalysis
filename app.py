@@ -2,9 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import io
-
-# --- Custom Signal Processing Functions ---
 
 def manual_rectify(data_series):
     data = pd.to_numeric(data_series, errors='coerce').fillna(0)
@@ -22,22 +21,36 @@ def manual_lpf(data_series, alpha, order):
         current_data = filtered
     return current_data
 
-def process_gait_cycles(df):
-    """Segments data and explicitly saves the timestamps for visualization."""
+def process_gait_cycles(df, alpha, order, thresh_pct=50.0):
     cycles = []
-    ic_times = []
-    to_times = []
     
-    h_max = df['Heel'].max()
-    t_max = df['Toe'].max()
+    df['Heel_LPF'] = manual_lpf(df['Heel'], alpha, order)
+    df['Toe_LPF'] = manual_lpf(df['Toe'], alpha, order)
     
-    if h_max > 0:
-        heel_bin = (df['Heel'] > h_max * 0.5).astype(int)
-        toe_bin = (df['Toe'] > t_max * 0.5).astype(int)
+    h_max = df['Heel_LPF'].max()
+    t_max = df['Toe_LPF'].max()
+    
+    h_thresh_val = h_max * (thresh_pct / 100.0)
+    t_thresh_val = t_max * (thresh_pct / 100.0)
+    
+    ic_times = [] 
+    ho_times = [] 
+    ff_times = [] 
+    to_times = [] 
+    
+    if h_max > 0 and t_max > 0:
+        heel_bin = (df['Heel_LPF'] > h_thresh_val).astype(int)
+        toe_bin = (df['Toe_LPF'] > t_thresh_val).astype(int)
         
         heel_edges = heel_bin.diff()
-        ic_indices = df.index[heel_edges == 1].tolist()
         toe_edges = toe_bin.diff()
+        
+        ic_times = df.loc[heel_edges == 1, 'Time'].tolist()   
+        ho_times = df.loc[heel_edges == -1, 'Time'].tolist()  
+        ff_times = df.loc[toe_edges == 1, 'Time'].tolist()    
+        to_times = df.loc[toe_edges == -1, 'Time'].tolist()   
+        
+        ic_indices = df.index[heel_edges == 1].tolist()
         
         for i in range(len(ic_indices) - 1):
             start = ic_indices[i]
@@ -51,39 +64,39 @@ def process_gait_cycles(df):
             
             if t_dur <= 0: continue
             
-            ic_times.append(t_start)
             c_df['Gait_Pct'] = ((c_df['Time'] - t_start) / t_dur) * 100
             
+            ff_candidates = df.index[(toe_edges == 1) & (df.index >= start) & (df.index < end)].tolist()
+            ho_candidates = df.index[(heel_edges == -1) & (df.index > start) & (df.index < end)].tolist()
             to_candidates = df.index[(toe_edges == -1) & (df.index > start) & (df.index < end)].tolist()
-            to_pct = 60.0 
-            if to_candidates:
-                to_idx = to_candidates[0]
-                to_time = df['Time'].iloc[to_idx]
-                to_times.append(to_time)
-                to_pct = ((to_time - t_start) / t_dur) * 100
-            else:
-                to_times.append(t_start + t_dur * 0.6)
+            
+            ff_pct = ((df['Time'].iloc[ff_candidates[0]] - t_start) / t_dur * 100) if ff_candidates else 15.0
+            ho_pct = ((df['Time'].iloc[ho_candidates[-1]] - t_start) / t_dur * 100) if ho_candidates else 45.0
+            to_pct = ((df['Time'].iloc[to_candidates[-1]] - t_start) / t_dur * 100) if to_candidates else 60.0
                 
             cycles.append({
                 'label': f'Siklus ke - {i+1}',
                 'df': c_df,
                 'duration': t_dur,
-                'stance_pct': to_pct,
+                'stance_pct': to_pct, 
                 'swing_pct': 100 - to_pct,
-                'cadence': 120 / t_dur 
+                'cadence': 120 / t_dur,
+                'ff_pct': ff_pct,
+                'ho_pct': ho_pct,
+                'to_pct': to_pct
             })
             
-    return {'cycles': cycles, 'ic_times': ic_times, 'to_times': to_times, 'h_max': h_max, 't_max': t_max}
+    return {
+        'cycles': cycles, 'ic_times': ic_times, 'ff_times': ff_times, 
+        'ho_times': ho_times, 'to_times': to_times, 
+        'h_max': h_max, 't_max': t_max, 'h_thresh_val': h_thresh_val, 't_thresh_val': t_thresh_val
+    }
 
-# --- Streamlit Application ---
-
-st.set_page_config(page_title="Wearable FES-Gait System", layout="wide")
-st.title("Wearable FES-Gait System Dashboard")
+st.set_page_config(page_title="Wearable Sensor System", layout="wide")
+st.title("Wearable Sensor System - Gait Analysis")
 
 if 'sensor_data' not in st.session_state:
     st.session_state['sensor_data'] = None
-if 'cycle_data' not in st.session_state:
-    st.session_state['cycle_data'] = {'cycles': [], 'ic_times': [], 'to_times': []}
 
 with st.sidebar:
     st.header("Data Management")
@@ -91,17 +104,9 @@ with st.sidebar:
     
     if st.button("Clear Data"):
         st.session_state['sensor_data'] = None
-        st.session_state['cycle_data'] = {'cycles': [], 'ic_times': [], 'to_times': []}
         st.rerun()
         
-    st.divider()
-    st.header("Filter Settings")
-    fc = st.slider("Cut-off Frequency (Hz)", min_value=0.1, max_value=20.0, value=3.0, step=0.1)
-    filter_order = st.slider("Filter Order (Passes)", min_value=1, max_value=5, value=1, step=1)
-    
-    dt = 0.01 
-    rc = 1.0 / (2 * np.pi * fc)
-    alpha_val = dt / (rc + dt)
+    st.info("Filter settings have been moved to their respective analysis tabs for independent control.")
 
 if uploaded_file is not None:
     try:
@@ -123,176 +128,179 @@ if uploaded_file is not None:
             df = df.apply(pd.to_numeric, errors='coerce').fillna(0)
             
             st.session_state['sensor_data'] = df
-            st.session_state['cycle_data'] = process_gait_cycles(df)
             st.sidebar.success(f"Loaded: {uploaded_file.name}")
         else:
             st.sidebar.error(f"Data format mismatch. Found {len(df.columns)} columns.")
     except Exception as e:
         st.sidebar.error(f"Error parsing file: {e}")
 
-tab1, tab2 = st.tabs(["SENSOR SYSTEM (Gait Analysis)", "OPEN-LOOP FES SYSTEM"])
 data_exists = isinstance(st.session_state.get('sensor_data'), pd.DataFrame)
 
-with tab1:
-    if data_exists:
-        df = st.session_state['sensor_data']
-        cycle_data = st.session_state['cycle_data']
+if data_exists:
+    df = st.session_state['sensor_data']
+    dt = 0.01 
+    
+    kinematic_tab, emg_tab = st.tabs(["Kinematic (Joint) Analysis", "EMG (Muscle) Analysis"])
+    
+    with kinematic_tab:
+        
+        st.subheader("1. FSR Filter Settings (For Gait Detection)")
+        
+        k_col1, k_col2 = st.columns(2)
+        with k_col1:
+            fsr_fc = st.slider("Heel/Toe Cut-off (Hz)", min_value=0.1, max_value=20.0, value=5.0, step=0.1)
+        with k_col2:
+            fsr_order = st.slider("Heel/Toe Filter Passes", min_value=1, max_value=10, value=2, step=1)
+            
+        gait_thresh = st.slider("Segmentation Threshold (%)", min_value=5.0, max_value=95.0, value=40.0, step=5.0, help="Percentage of max LPF sensor value to trigger edge detection.")
+        
+        fsr_alpha = dt / ((1.0 / (2 * np.pi * fsr_fc)) + dt)
+        
+        cycle_data = process_gait_cycles(df, fsr_alpha, fsr_order, gait_thresh)
         cycles = cycle_data['cycles']
         
-        kinematic_tab, emg_tab = st.tabs(["Kinematic (Joint) Analysis", "EMG (Muscle) Analysis"])
+        st.divider()
+        st.subheader("2. Kinematic Joint Angles & Gait Phases")
         
-        # ==========================================
-        # KINEMATIC MENU (Visualizing the Process)
-        # ==========================================
-        with kinematic_tab:
-            st.subheader("Process 1: Thresholding & Cycle Segmentation")
-            st.markdown("Visualizing Initial Contact (IC) and Toe Off (TO) detection from raw foot switches.")
-            
-            # --- 1. SEGMENTATION VISUALIZATION ---
-            fig_seg = go.Figure()
-            fig_seg.add_trace(go.Scatter(x=df['Time'], y=df['Heel'], name='Heel Sensor', line=dict(color='blue')))
-            fig_seg.add_trace(go.Scatter(x=df['Time'], y=df['Toe'], name='Toe Sensor', line=dict(color='orange')))
-            
-            # Plot dynamic threshold lines
-            h_thresh = cycle_data.get('h_max', 0) * 0.5
-            fig_seg.add_hline(y=h_thresh, line_dash="dot", line_color="gray", annotation_text="Detection Threshold")
-            
-            # Draw vertical markers for IC and TO
-            for ic in cycle_data['ic_times']:
-                fig_seg.add_vline(x=ic, line_color="green", line_width=2, annotation_text="IC (Start)")
-            for to in cycle_data['to_times']:
-                fig_seg.add_vline(x=to, line_color="red", line_dash="dash", line_width=1, annotation_text="TO")
-                
-            fig_seg.update_layout(xaxis_title="Raw Time (s)", yaxis_title="Sensor Value", height=250, margin=dict(t=30, b=10))
-            st.plotly_chart(fig_seg, use_container_width=True)
-
+        cycle_opts = ["Full Record (Raw Time)"] + [c['label'] for c in cycles]
+        selected_view = st.selectbox("Select View:", cycle_opts)
+        
+        if selected_view != "Full Record (Raw Time)" and cycles:
+            sel_cycle = next(c for c in cycles if c['label'] == selected_view)
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("T-Stance [%]", f"{sel_cycle['stance_pct']:.1f}")
+            c2.metric("T-Swing [%]", f"{sel_cycle['swing_pct']:.1f}")
+            c3.metric("Cycle Time [s]", f"{sel_cycle['duration']:.2f}")
+            c4.metric("Cadence [spm]", f"{sel_cycle['cadence']:.1f}")
             st.divider()
 
-            # --- 2. TIME NORMALIZATION VISUALIZATION ---
-            st.subheader("Process 2: Time Normalization (0-100% Gait Cycle)")
+        fig = make_subplots(
+            rows=4, cols=1, 
+            shared_xaxes=True, 
+            vertical_spacing=0.05,
+            subplot_titles=("HIP JOINT ANGLE", "KNEE JOINT ANGLE", "ANKLE JOINT ANGLE", "GAIT PHASE (OUTPUT FSR)")
+        )
+
+        if selected_view == "Full Record (Raw Time)" or not cycles:
+            x_axis = df['Time']
+            x_title = "Time (s)"
+            plot_hip = df['Hip']
+            plot_knee = df['Knee']
+            plot_ankle = df['Ankle']
+            plot_heel_lpf = df['Heel_LPF']
+            plot_toe_lpf = df['Toe_LPF']
             
-            plot_col, param_col = st.columns([2, 1])
+            fig.add_trace(go.Scatter(x=x_axis, y=plot_hip, name='Hip (Raw)', line=dict(color='red')), row=1, col=1)
+            fig.add_trace(go.Scatter(x=x_axis, y=plot_knee, name='Knee (Raw)', line=dict(color='blue')), row=2, col=1)
+            fig.add_trace(go.Scatter(x=x_axis, y=plot_ankle, name='Ankle (Raw)', line=dict(color='darkorange')), row=3, col=1)
             
-            with param_col:
-                cycle_opts = ["Full Record (Raw Time)"] + [c['label'] for c in cycles]
-                selected_view = st.selectbox("Select View:", cycle_opts)
+            fig.add_trace(go.Scatter(x=x_axis, y=plot_heel_lpf, name='Heel LPF', line=dict(color='green', width=2)), row=4, col=1)
+            fig.add_trace(go.Scatter(x=x_axis, y=plot_toe_lpf, name='Toe LPF', line=dict(color='purple', width=2)), row=4, col=1)
+            
+            h_thresh = cycle_data.get('h_thresh_val', 0)
+            t_thresh = cycle_data.get('t_thresh_val', 0)
+            fig.add_hline(y=h_thresh, line_dash="dot", line_color="green", row=4, col=1, opacity=0.5)
+            fig.add_hline(y=t_thresh, line_dash="dot", line_color="purple", row=4, col=1, opacity=0.5)
+            
+            for ic in cycle_data['ic_times']: fig.add_vline(x=ic, line_color="green", line_width=2, row="all", col=1)
+            for ho in cycle_data['ho_times']: fig.add_vline(x=ho, line_color="green", line_width=2, row="all", col=1)
+            
+            for ff in cycle_data['ff_times']: fig.add_vline(x=ff, line_color="purple", line_width=2, row="all", col=1)
+            for to in cycle_data['to_times']: fig.add_vline(x=to, line_color="purple", line_width=2, row="all", col=1)
                 
-                st.markdown("**Temporal Parameters**")
-                if selected_view == "Full Record (Raw Time)" or not cycles:
-                    st.info("Select a segmented cycle to view normalized metrics.")
-                    st.metric("Total Record Time", f"{df['Time'].max():.2f} s")
-                    st.metric("Cycles Detected", len(cycles))
-                else:
-                    sel_cycle = next(c for c in cycles if c['label'] == selected_view)
-                    col1, col2 = st.columns(2)
-                    col1.metric("T-Stance [%]", f"{sel_cycle['stance_pct']:.1f}")
-                    col1.metric("T-Swing [%]", f"{sel_cycle['swing_pct']:.1f}")
-                    col2.metric("Cycle Time [s]", f"{sel_cycle['duration']:.2f}")
-                    col2.metric("Cadence [spm]", f"{sel_cycle['cadence']:.1f}")
-                    
-                    st.divider()
-                    st.markdown("**Peak Kinematics (Filtered)**")
-                    f_hip = manual_lpf(sel_cycle['df']['Hip'], alpha_val, filter_order)
-                    f_knee = manual_lpf(sel_cycle['df']['Knee'], alpha_val, filter_order)
-                    f_ankle = manual_lpf(sel_cycle['df']['Ankle'], alpha_val, filter_order)
-                    
-                    st.metric("Max Hip Flexion [deg]", f"{max(f_hip):.1f}")
-                    st.metric("Max Knee Flexion [deg]", f"{max(f_knee):.1f}")
-                    st.metric("Max Ankle Dorsi [deg]", f"{max(f_ankle):.1f}")
+        else:
+            sel_cycle = next(c for c in cycles if c['label'] == selected_view)
+            c_df = sel_cycle['df']
+            x_axis = c_df['Gait_Pct']
+            x_title = "Normalized Gait Cycle (%)"
+            
+            plot_hip = c_df['Hip']
+            plot_knee = c_df['Knee']
+            plot_ankle = c_df['Ankle']
+            plot_heel_lpf = c_df['Heel_LPF']
+            plot_toe_lpf = c_df['Toe_LPF']
+            
+            fig.add_trace(go.Scatter(x=x_axis, y=plot_hip, name='Hip (Raw)', line=dict(color='red', width=3)), row=1, col=1)
+            fig.add_trace(go.Scatter(x=x_axis, y=plot_knee, name='Knee (Raw)', line=dict(color='blue', width=3)), row=2, col=1)
+            fig.add_trace(go.Scatter(x=x_axis, y=plot_ankle, name='Ankle (Raw)', line=dict(color='darkorange', width=3)), row=3, col=1)
+            
+            fig.add_trace(go.Scatter(x=x_axis, y=plot_heel_lpf, name='Heel LPF', line=dict(color='green', width=3)), row=4, col=1)
+            fig.add_trace(go.Scatter(x=x_axis, y=plot_toe_lpf, name='Toe LPF', line=dict(color='purple', width=3)), row=4, col=1)
+            
+            fig.add_vline(x=0, line_color="green", line_width=2, row="all", col=1, annotation_text="Heel Rise")
+            fig.add_vline(x=sel_cycle['ho_pct'], line_color="green", line_width=2, row="all", col=1, annotation_text="Heel Fall")
+            
+            fig.add_vline(x=sel_cycle['ff_pct'], line_color="purple", line_width=2, row="all", col=1, annotation_text="Toe Rise")
+            fig.add_vline(x=sel_cycle['to_pct'], line_color="purple", line_width=2, row="all", col=1, annotation_text="Toe Fall")
 
-            with plot_col:
-                fig_joints = go.Figure()
+        fig.update_layout(height=800, showlegend=True, margin=dict(t=40, b=40, l=10, r=10))
+        fig.update_yaxes(title_text="Deg", row=1, col=1)
+        fig.update_yaxes(title_text="Deg", row=2, col=1)
+        fig.update_yaxes(title_text="Deg", row=3, col=1)
+        fig.update_yaxes(title_text="Volt", row=4, col=1)
+        fig.update_xaxes(title_text=x_title, row=4, col=1)
+        
+        st.plotly_chart(fig, use_container_width=True)
+
+    with emg_tab:
+        
+        st.subheader("1. EMG Filter Settings")
+        
+        e_col1, e_col2 = st.columns(2)
+        with e_col1:
+            emg_fc = st.slider("EMG Cut-off (Hz)", min_value=0.1, max_value=20.0, value=3.0, step=0.1)
+        with e_col2:
+            emg_order = st.slider("EMG Filter Passes", min_value=1, max_value=10, value=1, step=1)
+            
+        emg_alpha = dt / ((1.0 / (2 * np.pi * emg_fc)) + dt)
+        
+        st.divider()
+        
+        emg_muscles = ['Gluteus_Maximus', 'Biceps_Femoris_Short', 'Biceps_Femoris_Long', 'Vastus_Medialis', 'Vastus_Lateralis', 'Rectus_Femoris', 'Soleus', 'Gastrocnemius', 'Tibialis_Anterior']
+        muscle_thresholds = {}
+
+        st.subheader("2. Individual Muscle Envelopes & Threshold Tuning")
+        cols = st.columns(3)
+        for index, muscle in enumerate(emg_muscles):
+            col = cols[index % 3] 
+            with col:
+                display_name = muscle.replace('_', ' ').upper()
+                st.markdown(f"**{display_name}**")
+                thresh_pct = st.slider(f"Threshold (%)", min_value=1.0, max_value=50.0, value=5.0, step=0.5, key=f"thresh_{muscle}")
+                muscle_thresholds[muscle] = thresh_pct
                 
-                if selected_view == "Full Record (Raw Time)" or not cycles:
-                    x_axis = df['Time']
-                    x_title = "Time (s)"
-                    plot_hip = manual_lpf(df['Hip'], alpha_val, filter_order)
-                    plot_knee = manual_lpf(df['Knee'], alpha_val, filter_order)
-                    plot_ankle = manual_lpf(df['Ankle'], alpha_val, filter_order)
-                    
-                    fig_joints.add_trace(go.Scatter(x=x_axis, y=plot_hip, name='Hip', line=dict(color='red')))
-                    fig_joints.add_trace(go.Scatter(x=x_axis, y=plot_knee, name='Knee', line=dict(color='blue')))
-                    fig_joints.add_trace(go.Scatter(x=x_axis, y=plot_ankle, name='Ankle', line=dict(color='green')))
-                else:
-                    sel_cycle = next(c for c in cycles if c['label'] == selected_view)
-                    c_df = sel_cycle['df']
-                    x_axis = c_df['Gait_Pct']
-                    x_title = "Normalized Gait Cycle (%)"
-                    plot_hip = manual_lpf(c_df['Hip'], alpha_val, filter_order)
-                    plot_knee = manual_lpf(c_df['Knee'], alpha_val, filter_order)
-                    plot_ankle = manual_lpf(c_df['Ankle'], alpha_val, filter_order)
-                    
-                    fig_joints.add_trace(go.Scatter(x=x_axis, y=plot_hip, name='Hip', line=dict(color='red', width=3)))
-                    fig_joints.add_trace(go.Scatter(x=x_axis, y=plot_knee, name='Knee', line=dict(color='blue', width=3)))
-                    fig_joints.add_trace(go.Scatter(x=x_axis, y=plot_ankle, name='Ankle', line=dict(color='green', width=3)))
-                    
-                    # Vertical line splitting Stance vs Swing phase
-                    fig_joints.add_vline(x=sel_cycle['stance_pct'], line_dash="dash", line_color="gray", annotation_text="Toe Off (Stance → Swing)")
-
-                fig_joints.update_layout(xaxis_title=x_title, yaxis_title="Angle (Deg)", height=400, margin=dict(t=30, b=10))
-                st.plotly_chart(fig_joints, use_container_width=True)
-
-        # ==========================================
-        # EMG MENU (Remains unchanged)
-        # ==========================================
-        with emg_tab:
-            emg_muscles = ['Gluteus_Maximus', 'Biceps_Femoris_Short', 'Biceps_Femoris_Long', 'Vastus_Medialis', 'Vastus_Lateralis', 'Rectus_Femoris', 'Soleus', 'Gastrocnemius', 'Tibialis_Anterior']
-            muscle_thresholds = {}
-
-            st.subheader("Individual Muscle Envelopes & Threshold Tuning")
-            cols = st.columns(3)
-            for index, muscle in enumerate(emg_muscles):
-                col = cols[index % 3] 
-                with col:
-                    display_name = muscle.replace('_', ' ').upper()
-                    st.markdown(f"**{display_name}**")
-                    thresh_pct = st.slider(f"Threshold (%)", min_value=1.0, max_value=50.0, value=5.0, step=0.5, key=f"thresh_{muscle}")
-                    muscle_thresholds[muscle] = thresh_pct
-                    
-                    rectified_data = manual_rectify(df[muscle])
-                    filtered_data = manual_lpf(rectified_data, alpha_val, filter_order)
-                    max_val = max(filtered_data) if filtered_data else 0
-                    abs_threshold = (thresh_pct / 100.0) * max_val
-                    
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=df['Time'], y=df[muscle], name='Raw', line=dict(color='lightgray', width=1)))
-                    fig.add_trace(go.Scatter(x=df['Time'], y=filtered_data, name='Envelope', line=dict(width=2)))
-                    fig.add_hline(y=abs_threshold, line_dash="dash", line_color="red")
-                    
-                    fig.update_layout(xaxis_title="Time (s)", yaxis_title="Amp", height=200, margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
-                    st.plotly_chart(fig, use_container_width=True)
-
-            st.divider()
-            st.subheader("Combined Muscle Activation Timing")
-            
-            fig_timing = go.Figure()
-            emg_muscles_reversed = list(reversed(emg_muscles))
-            
-            for i, muscle in enumerate(emg_muscles_reversed):
                 rectified_data = manual_rectify(df[muscle])
-                envelope = manual_lpf(rectified_data, alpha_val, filter_order)
-                thresh_pct = muscle_thresholds[muscle]
-                max_val = max(envelope) if envelope else 0
+                filtered_data = manual_lpf(rectified_data, emg_alpha, emg_order)
+                max_val = max(filtered_data) if filtered_data else 0
                 abs_threshold = (thresh_pct / 100.0) * max_val
                 
-                active_state = [i if val >= abs_threshold else np.nan for val in envelope]
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=df['Time'], y=df[muscle], name='Raw', line=dict(color='lightgray', width=1)))
+                fig.add_trace(go.Scatter(x=df['Time'], y=filtered_data, name='Envelope', line=dict(width=2)))
+                fig.add_hline(y=abs_threshold, line_dash="dash", line_color="red")
                 
-                fig_timing.add_trace(go.Scatter(x=df['Time'], y=active_state, mode='lines', name=muscle.replace('_', ' '), line=dict(width=15), hoverinfo='name+x'))
+                fig.update_layout(xaxis_title="Time (s)", yaxis_title="Amp", height=200, margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
 
-            fig_timing.update_layout(xaxis_title="Time (s)", yaxis=dict(tickmode='array', tickvals=list(range(len(emg_muscles_reversed))), ticktext=[m.replace('_', ' ').upper() for m in emg_muscles_reversed], showgrid=False, zeroline=False), height=450, margin=dict(t=30, b=10, l=150), showlegend=False)
-            st.plotly_chart(fig_timing, use_container_width=True)
+        st.divider()
+        st.subheader("3. Combined Muscle Activation Timing")
+        
+        fig_timing = go.Figure()
+        emg_muscles_reversed = list(reversed(emg_muscles))
+        
+        for i, muscle in enumerate(emg_muscles_reversed):
+            rectified_data = manual_rectify(df[muscle])
+            envelope = manual_lpf(rectified_data, emg_alpha, emg_order)
+            thresh_pct = muscle_thresholds[muscle]
+            max_val = max(envelope) if envelope else 0
+            abs_threshold = (thresh_pct / 100.0) * max_val
             
-    else:
-        st.info("Upload sensor data to view the Gait Analysis.")
+            active_state = [i if val >= abs_threshold else np.nan for val in envelope]
+            
+            fig_timing.add_trace(go.Scatter(x=df['Time'], y=active_state, mode='lines', name=muscle.replace('_', ' '), line=dict(width=15), hoverinfo='name+x'))
 
-with tab2:
-    st.subheader("Open-Loop FES Configuration")
-    # ... [Tab 2 Open Loop FES content remains unchanged]
-    fes_control_col, fes_plot_col = st.columns([1, 3])
-    with fes_control_col:
-        st.button("START FES")
-        st.button("STOP FES")
-    with fes_plot_col:
-        fig_boost = go.Figure()
-        fig_boost.update_layout(title="Boost Voltage", height=200)
-        st.plotly_chart(fig_boost, use_container_width=True)
+        fig_timing.update_layout(xaxis_title="Time (s)", yaxis=dict(tickmode='array', tickvals=list(range(len(emg_muscles_reversed))), ticktext=[m.replace('_', ' ').upper() for m in emg_muscles_reversed], showgrid=False, zeroline=False), height=450, margin=dict(t=30, b=10, l=150), showlegend=False)
+        st.plotly_chart(fig_timing, use_container_width=True)
+        
+else:
+    st.info("Please upload a Sensor Data file to begin Gait Analysis.")
