@@ -91,7 +91,6 @@ def process_gait_cycles(df, alpha, order, thresh_pct=50.0):
                 'duration': t_dur,
                 'stance_pct': to_pct, 
                 'swing_pct': 100 - to_pct,
-                # Changed from 120 to 60 for accurate Strides/Min
                 'cadence': 60 / t_dur, 
                 'ff_pct': ff_pct,
                 'ho_pct': ho_pct,
@@ -161,19 +160,6 @@ data_exists = isinstance(st.session_state.get('sensor_data'), pd.DataFrame)
 if data_exists:
     df = st.session_state['sensor_data']
     dt = 0.01 # Assumed 100Hz sampling
-    
-    # ==========================================
-    # GLOBAL GAIT SEGMENTATION (Shared by both tabs)
-    # ==========================================
-    st.sidebar.divider()
-    st.sidebar.subheader("Global Step Detection (FSR)")
-    fsr_fc = st.sidebar.slider("FSR Cut-off (Hz)", 0.1, 20.0, 5.0, 0.1)
-    fsr_order = st.sidebar.slider("FSR Passes", 1, 10, 2, 1)
-    gait_thresh = st.sidebar.slider("Step Threshold (%)", 5.0, 95.0, 40.0, 5.0)
-    
-    fsr_alpha = dt / ((1.0 / (2 * np.pi * fsr_fc)) + dt)
-    cycle_data = process_gait_cycles(df, fsr_alpha, fsr_order, gait_thresh)
-    cycles = cycle_data['cycles']
 
     kinematic_tab, emg_tab = st.tabs(["Kinematic (Joint) Analysis", "EMG (Muscle) Analysis"])
     
@@ -197,6 +183,21 @@ if data_exists:
 
         st.markdown("### Step 2: FSR Preprocessing & Edge Detection")
         st.write("FSR data is filtered and **normalized (0 to 1)** based on peak pressure before applying the threshold.")
+        
+        k_col1, k_col2, k_col3 = st.columns(3)
+        with k_col1:
+            fsr_fc = st.slider("FSR Cut-off (Hz)", min_value=0.1, max_value=20.0, value=5.0, step=0.1)
+        with k_col2:
+            fsr_order = st.slider("FSR Passes", min_value=1, max_value=10, value=2, step=1)
+        with k_col3:
+            gait_thresh = st.slider("Step Threshold (%)", min_value=5.0, max_value=95.0, value=40.0, step=5.0)
+            
+        fsr_alpha = dt / ((1.0 / (2 * np.pi * fsr_fc)) + dt)
+        
+        # Calculate cycles here so both this tab and the EMG tab can use them
+        cycle_data = process_gait_cycles(df, fsr_alpha, fsr_order, gait_thresh)
+        cycles = cycle_data['cycles']
+
         fig_filter = go.Figure()
         fig_filter.add_trace(go.Scatter(x=df['Time'], y=df['Heel_Norm'], name='Heel (Norm)', line=dict(color='green', width=2)))
         fig_filter.add_trace(go.Scatter(x=df['Time'], y=df['Toe_Norm'], name='Toe (Norm)', line=dict(color='purple', width=2)))
@@ -259,7 +260,7 @@ if data_exists:
         st.markdown("### Step 1: Raw EMG Data")
         st.write("Displaying a subset of raw muscle signals for quality check.")
         fig_emg_raw = go.Figure()
-        # Just plot the first 3 muscles to avoid clutter, user can check standard data quality here
+        
         for m in emg_muscles[:3]: 
             fig_emg_raw.add_trace(go.Scatter(x=df['Time'], y=df[m], name=m.replace('_', ' ')))
         fig_emg_raw.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=10))
@@ -278,12 +279,9 @@ if data_exists:
         muscle_envelopes_norm = {}
         muscle_thresholds_vals = {}
         
-        # Removed 3x3 columns - now a vertical scroll layout
         for muscle in emg_muscles:
             st.markdown(f"#### {muscle.replace('_', ' ').upper()}")
             
-            # Use columns just to put the slider next to the graph title if desired, 
-            # but keeping it simple here:
             thresh_pct = st.slider(f"Activation Threshold (%)", 1.0, 50.0, 5.0, 0.5, key=f"t_{muscle}")
             
             # Process FULL record
@@ -299,18 +297,30 @@ if data_exists:
             norm_threshold = thresh_pct / 100.0
             muscle_thresholds_vals[muscle] = norm_threshold
             
-            # Plot preview (Full Record, Full Width)
+            # Plot preview
             fig_env = go.Figure()
-            # We scale the raw data visually just so it fits on the same 0-1 axis for comparison
+            
             raw_scaled = [v / max_val for v in df[muscle]] if max_val > 0 else df[muscle]
             
             fig_env.add_trace(go.Scatter(x=df['Time'], y=raw_scaled, name='Raw (Scaled)', line=dict(color='lightgray', width=1)))
             fig_env.add_trace(go.Scatter(x=df['Time'], y=env_norm, name='Normalized Env', line=dict(width=2, color='royalblue')))
+            
+            # Draw threshold line
             fig_env.add_hline(y=norm_threshold, line_dash="dash", line_color="red", annotation_text=f"Threshold ({thresh_pct}%)")
             
-            fig_env.update_layout(height=250, margin=dict(t=10, b=10, l=10, r=10), showlegend=True, yaxis_title="Norm Amp")
+            # Draw absolute max ceiling line
+            fig_env.add_hline(y=1.0, line_dash="solid", line_color="black", opacity=0.2, annotation_text="Max Peak (1.0)")
+            
+            # LOCK THE Y-AXIS RANGE
+            fig_env.update_layout(
+                height=250, 
+                margin=dict(t=10, b=10, l=10, r=10), 
+                showlegend=True, 
+                yaxis_title="Norm Amp",
+                yaxis=dict(range=[0, 1.1]) # Sets a rigid scale from 0 to just slightly above 1
+            )
             st.plotly_chart(fig_env, use_container_width=True)
-            st.write("") # Small spacer
+            st.write("") 
 
         st.divider()
 
