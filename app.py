@@ -85,7 +85,7 @@ def process_gait_cycles(df, alpha, order, thresh_pct=50.0):
                 'duration': t_dur,
                 'stance_pct': to_pct, 
                 'swing_pct': 100 - to_pct,
-                'cadence': 120 / t_dur,
+                'cadence': 60 / t_dur,
                 'ff_pct': ff_pct,
                 'ho_pct': ho_pct,
                 'to_pct': to_pct
@@ -238,7 +238,7 @@ if data_exists:
                 c1.metric("Avg Stance [%]", f"{avg_stance:.1f} ± {std_stance:.1f}")
                 c2.metric("Avg Swing [%]", f"{avg_swing:.1f} ± {std_swing:.1f}")
                 c3.metric("Avg Cycle Time [s]", f"{avg_dur:.2f} ± {std_dur:.2f}")
-                c4.metric("Avg Cadence [spm]", f"{avg_cadence:.1f}")
+                c4.metric("Avg Cadence [strd/min]", f"{avg_cadence:.1f}")
             else:
                 sel_cycle = next(c for c in cycles if c['label'] == selected_view)
                 c1.metric("Stance Time [%]", f"{sel_cycle['stance_pct']:.1f}")
