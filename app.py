@@ -220,13 +220,31 @@ if data_exists:
         cycle_opts = ["Full Record (Raw Time)"] + [c['label'] for c in cycles]
         selected_view = st.selectbox("Select Stride / View:", cycle_opts)
         
-        if selected_view != "Full Record (Raw Time)" and cycles:
-            sel_cycle = next(c for c in cycles if c['label'] == selected_view)
+        # DYNAMIC METRICS: Averages for full record, Specifics for single cycle
+        if cycles:
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Stance Time [%]", f"{sel_cycle['stance_pct']:.1f}")
-            c2.metric("Swing Time [%]", f"{sel_cycle['swing_pct']:.1f}")
-            c3.metric("Cycle Time [s]", f"{sel_cycle['duration']:.2f}")
-            c4.metric("Cadence [spm]", f"{sel_cycle['cadence']:.1f}")
+            if selected_view == "Full Record (Raw Time)":
+                avg_stance = np.mean([c['stance_pct'] for c in cycles])
+                std_stance = np.std([c['stance_pct'] for c in cycles])
+                
+                avg_swing = np.mean([c['swing_pct'] for c in cycles])
+                std_swing = np.std([c['swing_pct'] for c in cycles])
+                
+                avg_dur = np.mean([c['duration'] for c in cycles])
+                std_dur = np.std([c['duration'] for c in cycles])
+                
+                avg_cadence = np.mean([c['cadence'] for c in cycles])
+                
+                c1.metric("Avg Stance [%]", f"{avg_stance:.1f} ± {std_stance:.1f}")
+                c2.metric("Avg Swing [%]", f"{avg_swing:.1f} ± {std_swing:.1f}")
+                c3.metric("Avg Cycle Time [s]", f"{avg_dur:.2f} ± {std_dur:.2f}")
+                c4.metric("Avg Cadence [spm]", f"{avg_cadence:.1f}")
+            else:
+                sel_cycle = next(c for c in cycles if c['label'] == selected_view)
+                c1.metric("Stance Time [%]", f"{sel_cycle['stance_pct']:.1f}")
+                c2.metric("Swing Time [%]", f"{sel_cycle['swing_pct']:.1f}")
+                c3.metric("Cycle Time [s]", f"{sel_cycle['duration']:.2f}")
+                c4.metric("Cadence [spm]", f"{sel_cycle['cadence']:.1f}")
             st.write("") # Spacer
 
         fig_final = make_subplots(
