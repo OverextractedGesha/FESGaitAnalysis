@@ -14,7 +14,6 @@ def manual_hpf(data_series, alpha):
     data = pd.to_numeric(data_series, errors='coerce').fillna(0).tolist()
     if not data: return []
     
-    # Center the data first to minimize the initial "warm-up" spike
     mean_val = sum(data) / len(data)
     data = [x - mean_val for x in data]
     
@@ -26,7 +25,8 @@ def manual_hpf(data_series, alpha):
 
 def manual_rectify(data_series):
     """Full-wave rectification (absolute value)."""
-    data = pd.to_numeric(data_series, errors='coerce').fillna(0)
+    data = pd.Series(data_series)
+    data = pd.to_numeric(data, errors='coerce').fillna(0)
     return data.apply(lambda x: x if x >= 0 else -x)
 
 def manual_lpf(data_series, alpha, order):
@@ -57,7 +57,7 @@ def process_gait_cycles(df, alpha, order, thresh_pct=50.0):
     df['Heel_Norm'] = df['Heel_LPF'] / h_max if h_max > 0 else 0
     df['Toe_Norm'] = df['Toe_LPF'] / t_max if t_max > 0 else 0
     
-    # 3. Threshold (now a simple decimal between 0 and 1)
+    # 3. Threshold 
     thresh_val = thresh_pct / 100.0
     
     ic_times = [] 
@@ -66,7 +66,6 @@ def process_gait_cycles(df, alpha, order, thresh_pct=50.0):
     to_times = [] 
     
     if h_max > 0 and t_max > 0:
-        # Binarize based on NORMALIZED signal
         heel_bin = (df['Heel_Norm'] > thresh_val).astype(int)
         toe_bin = (df['Toe_Norm'] > thresh_val).astype(int)
         
@@ -101,6 +100,11 @@ def process_gait_cycles(df, alpha, order, thresh_pct=50.0):
             ff_pct = ((df['Time'].iloc[ff_candidates[0]] - t_start) / t_dur * 100) if ff_candidates else 15.0
             ho_pct = ((df['Time'].iloc[ho_candidates[-1]] - t_start) / t_dur * 100) if ho_candidates else 45.0
             to_pct = ((df['Time'].iloc[to_candidates[-1]] - t_start) / t_dur * 100) if to_candidates else 60.0
+            
+            # --- CALCULATE JOINT ANGLE PARAMETERS ---
+            hip_max, hip_min = c_df['Hip'].max(), c_df['Hip'].min()
+            knee_max, knee_min = c_df['Knee'].max(), c_df['Knee'].min()
+            ankle_max, ankle_min = c_df['Ankle'].max(), c_df['Ankle'].min()
                 
             cycles.append({
                 'label': f'Siklus ke - {i+1}',
@@ -111,7 +115,10 @@ def process_gait_cycles(df, alpha, order, thresh_pct=50.0):
                 'cadence': 60 / t_dur, 
                 'ff_pct': ff_pct,
                 'ho_pct': ho_pct,
-                'to_pct': to_pct
+                'to_pct': to_pct,
+                'hip_max': hip_max, 'hip_min': hip_min, 'hip_rom': hip_max - hip_min,
+                'knee_max': knee_max, 'knee_min': knee_min, 'knee_rom': knee_max - knee_min,
+                'ankle_max': ankle_max, 'ankle_min': ankle_min, 'ankle_rom': ankle_max - ankle_min
             })
             
     return {
@@ -198,7 +205,6 @@ if data_exists:
         st.divider()
 
         st.markdown("### Step 2: FSR Preprocessing & Edge Detection")
-        st.write("FSR data is filtered and **normalized (0 to 1)** based on peak pressure before applying the threshold.")
         
         k_col1, k_col2, k_col3 = st.columns(3)
         with k_col1:
@@ -225,23 +231,45 @@ if data_exists:
 
         st.divider()
 
-        st.markdown("### Step 3: Kinematic Gait Phases")
+        st.markdown("### Step 3: Kinematic Gait Phases & Parameters")
         cycle_opts = ["Full Record (Raw Time)"] + [c['label'] for c in cycles]
         selected_view = st.selectbox("Select Stride / View:", cycle_opts, key="kinematic_view")
         
         if cycles:
+            st.markdown("#### Temporal Parameters")
             c1, c2, c3, c4 = st.columns(4)
+            
+            st.markdown("#### Joint Angle Parameters")
+            
             if selected_view == "Full Record (Raw Time)":
                 c1.metric("Avg Stance [%]", f"{np.mean([c['stance_pct'] for c in cycles]):.1f}")
                 c2.metric("Avg Swing [%]", f"{np.mean([c['swing_pct'] for c in cycles]):.1f}")
                 c3.metric("Avg Cycle Time [s]", f"{np.mean([c['duration'] for c in cycles]):.2f}")
                 c4.metric("Avg Cadence [strd/min]", f"{np.mean([c['cadence'] for c in cycles]):.1f}")
+                
+                joint_data = {
+                    "Joint": ["Hip", "Knee", "Ankle"],
+                    "Avg Max (Deg)": [np.mean([c['hip_max'] for c in cycles]), np.mean([c['knee_max'] for c in cycles]), np.mean([c['ankle_max'] for c in cycles])],
+                    "Avg Min (Deg)": [np.mean([c['hip_min'] for c in cycles]), np.mean([c['knee_min'] for c in cycles]), np.mean([c['ankle_min'] for c in cycles])],
+                    "Avg ROM (Deg)": [np.mean([c['hip_rom'] for c in cycles]), np.mean([c['knee_rom'] for c in cycles]), np.mean([c['ankle_rom'] for c in cycles])]
+                }
             else:
                 sel_cycle = next(c for c in cycles if c['label'] == selected_view)
+                
                 c1.metric("Stance Time [%]", f"{sel_cycle['stance_pct']:.1f}")
                 c2.metric("Swing Time [%]", f"{sel_cycle['swing_pct']:.1f}")
                 c3.metric("Cycle Time [s]", f"{sel_cycle['duration']:.2f}")
                 c4.metric("Cadence [strd/min]", f"{sel_cycle['cadence']:.1f}")
+                
+                joint_data = {
+                    "Joint": ["Hip", "Knee", "Ankle"],
+                    "Max (Deg)": [sel_cycle['hip_max'], sel_cycle['knee_max'], sel_cycle['ankle_max']],
+                    "Min (Deg)": [sel_cycle['hip_min'], sel_cycle['knee_min'], sel_cycle['ankle_min']],
+                    "ROM (Deg)": [sel_cycle['hip_rom'], sel_cycle['knee_rom'], sel_cycle['ankle_rom']]
+                }
+                
+            joint_df = pd.DataFrame(joint_data).round(2)
+            st.table(joint_df.set_index("Joint"))
 
         fig_final = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, subplot_titles=("NORMALIZED FSR", "JOINT ANGLES"))
 
@@ -273,7 +301,6 @@ if data_exists:
         emg_muscles = ['Gluteus_Maximus', 'Biceps_Femoris_Short', 'Biceps_Femoris_Long', 'Vastus_Medialis', 'Vastus_Lateralis', 'Rectus_Femoris', 'Soleus', 'Gastrocnemius', 'Tibialis_Anterior']
         
         st.markdown("### Step 1: Raw EMG Data")
-        st.write("Notice how the baseline of the raw signal drifts up and down. This is movement artifact noise.")
         fig_emg_raw = go.Figure()
         
         for m in emg_muscles[:3]: 
@@ -284,14 +311,12 @@ if data_exists:
         st.divider()
 
         st.markdown("### Step 2: Linear Envelopes & Normalization")
-        st.write("Muscles are **High-Pass filtered** to steady the baseline, rectified, Low-Pass filtered, and normalized (0 to 1).")
         
         e_col1, e_col2, e_col3 = st.columns(3)
-        with e_col1: emg_hpf_fc = st.slider("High-Pass Cut-off (Hz)", 5.0, 50.0, 20.0, 1.0, help="Higher values aggressively steady the baseline.")
-        with e_col2: emg_lpf_fc = st.slider("Low-Pass Cut-off (Hz)", 0.1, 20.0, 3.0, 0.1, help="Lower values create a smoother envelope.")
+        with e_col1: emg_hpf_fc = st.slider("High-Pass Cut-off (Hz)", 5.0, 50.0, 20.0, 1.0)
+        with e_col2: emg_lpf_fc = st.slider("Low-Pass Cut-off (Hz)", 0.1, 20.0, 3.0, 0.1)
         with e_col3: emg_order = st.slider("Low-Pass Passes", 1, 10, 1, 1)
         
-        # Calculate Alphas
         emg_hpf_rc = 1.0 / (2 * np.pi * emg_hpf_fc)
         emg_hpf_alpha = emg_hpf_rc / (emg_hpf_rc + dt)
         
@@ -305,15 +330,10 @@ if data_exists:
             
             thresh_pct = st.slider(f"Activation Threshold (%)", 1.0, 50.0, 5.0, 0.5, key=f"t_{muscle}")
             
-            # Process FULL record
-            # 1. Steady the baseline (HPF)
             hpf_data = manual_hpf(df[muscle], emg_hpf_alpha)
-            # 2. Rectify
             rectified_data = manual_rectify(hpf_data)
-            # 3. Create Envelope (LPF)
             envelope = manual_lpf(rectified_data, emg_lpf_alpha, emg_order)
             
-            # 4. Normalize (0 to 1)
             max_val = max(envelope) if envelope else 0
             env_norm = [v / max_val for v in envelope] if max_val > 0 else envelope
             muscle_envelopes_norm[muscle] = env_norm
@@ -321,7 +341,6 @@ if data_exists:
             norm_threshold = thresh_pct / 100.0
             muscle_thresholds_vals[muscle] = norm_threshold
             
-            # Plot preview
             fig_env = go.Figure()
             
             raw_scaled = [v / max_val for v in hpf_data] if max_val > 0 else hpf_data
@@ -337,7 +356,7 @@ if data_exists:
                 margin=dict(t=10, b=10, l=10, r=10), 
                 showlegend=True, 
                 yaxis_title="Norm Amp",
-                yaxis=dict(range=[-0.1, 1.1]) # Strict scale to perfectly align visual comparisons
+                yaxis=dict(range=[-0.1, 1.1]) 
             )
             st.plotly_chart(fig_env, use_container_width=True)
             st.write("") 
@@ -345,7 +364,6 @@ if data_exists:
         st.divider()
 
         st.markdown("### Step 3: Muscle Activation Timing")
-        st.write("View continuous activation, or slice the processed data to view a single stride.")
         
         emg_cycle_opts = ["Full Record (Raw Time)"] + [c['label'] for c in cycles]
         emg_view = st.selectbox("Select Stride / View:", emg_cycle_opts, key="emg_view")
