@@ -9,11 +9,28 @@ import io
 # SIGNAL PROCESSING FUNCTIONS
 # ==========================================
 
+def manual_hpf(data_series, alpha):
+    """First-order High-Pass Filter to remove baseline wander."""
+    data = pd.to_numeric(data_series, errors='coerce').fillna(0).tolist()
+    if not data: return []
+    
+    # Center the data first to minimize the initial "warm-up" spike
+    mean_val = sum(data) / len(data)
+    data = [x - mean_val for x in data]
+    
+    filtered = [data[0]]
+    for i in range(1, len(data)):
+        val = alpha * (filtered[-1] + data[i] - data[i-1])
+        filtered.append(val)
+    return filtered
+
 def manual_rectify(data_series):
+    """Full-wave rectification (absolute value)."""
     data = pd.to_numeric(data_series, errors='coerce').fillna(0)
     return data.apply(lambda x: x if x >= 0 else -x)
 
 def manual_lpf(data_series, alpha, order):
+    """Exponential moving average Low-Pass Filter."""
     data = pd.to_numeric(data_series, errors='coerce').fillna(0).tolist()
     if not data: return []
     current_data = data
@@ -131,7 +148,6 @@ if uploaded_file is not None:
         df = pd.read_csv(io.StringIO(content), sep=r'\s+', header=None)
         df = df.dropna(axis=1, how='all')
         
-        # Check if first row is headers, if so, skip it
         if isinstance(df.iloc[0, 0], str) and not df.iloc[0, 0].replace('.','',1).isdigit():
             df = df.iloc[1:].reset_index(drop=True)
             
@@ -194,7 +210,6 @@ if data_exists:
             
         fsr_alpha = dt / ((1.0 / (2 * np.pi * fsr_fc)) + dt)
         
-        # Calculate cycles here so both this tab and the EMG tab can use them
         cycle_data = process_gait_cycles(df, fsr_alpha, fsr_order, gait_thresh)
         cycles = cycle_data['cycles']
 
@@ -258,7 +273,7 @@ if data_exists:
         emg_muscles = ['Gluteus_Maximus', 'Biceps_Femoris_Short', 'Biceps_Femoris_Long', 'Vastus_Medialis', 'Vastus_Lateralis', 'Rectus_Femoris', 'Soleus', 'Gastrocnemius', 'Tibialis_Anterior']
         
         st.markdown("### Step 1: Raw EMG Data")
-        st.write("Displaying a subset of raw muscle signals for quality check.")
+        st.write("Notice how the baseline of the raw signal drifts up and down. This is movement artifact noise.")
         fig_emg_raw = go.Figure()
         
         for m in emg_muscles[:3]: 
@@ -269,12 +284,18 @@ if data_exists:
         st.divider()
 
         st.markdown("### Step 2: Linear Envelopes & Normalization")
-        st.write("Muscles are rectified, filtered, and **normalized (0 to 1)** to their peak activation. Thresholds are evaluated against this normalized envelope.")
+        st.write("Muscles are **High-Pass filtered** to steady the baseline, rectified, Low-Pass filtered, and normalized (0 to 1).")
         
-        e_col1, e_col2 = st.columns(2)
-        with e_col1: emg_fc = st.slider("EMG Cut-off (Hz)", 0.1, 20.0, 3.0, 0.1)
-        with e_col2: emg_order = st.slider("EMG Filter Passes", 1, 10, 1, 1)
-        emg_alpha = dt / ((1.0 / (2 * np.pi * emg_fc)) + dt)
+        e_col1, e_col2, e_col3 = st.columns(3)
+        with e_col1: emg_hpf_fc = st.slider("High-Pass Cut-off (Hz)", 5.0, 50.0, 20.0, 1.0, help="Higher values aggressively steady the baseline.")
+        with e_col2: emg_lpf_fc = st.slider("Low-Pass Cut-off (Hz)", 0.1, 20.0, 3.0, 0.1, help="Lower values create a smoother envelope.")
+        with e_col3: emg_order = st.slider("Low-Pass Passes", 1, 10, 1, 1)
+        
+        # Calculate Alphas
+        emg_hpf_rc = 1.0 / (2 * np.pi * emg_hpf_fc)
+        emg_hpf_alpha = emg_hpf_rc / (emg_hpf_rc + dt)
+        
+        emg_lpf_alpha = dt / ((1.0 / (2 * np.pi * emg_lpf_fc)) + dt)
         
         muscle_envelopes_norm = {}
         muscle_thresholds_vals = {}
@@ -285,39 +306,38 @@ if data_exists:
             thresh_pct = st.slider(f"Activation Threshold (%)", 1.0, 50.0, 5.0, 0.5, key=f"t_{muscle}")
             
             # Process FULL record
-            rectified_data = manual_rectify(df[muscle])
-            envelope = manual_lpf(rectified_data, emg_alpha, emg_order)
+            # 1. Steady the baseline (HPF)
+            hpf_data = manual_hpf(df[muscle], emg_hpf_alpha)
+            # 2. Rectify
+            rectified_data = manual_rectify(hpf_data)
+            # 3. Create Envelope (LPF)
+            envelope = manual_lpf(rectified_data, emg_lpf_alpha, emg_order)
             
-            # Normalize (0 to 1)
+            # 4. Normalize (0 to 1)
             max_val = max(envelope) if envelope else 0
             env_norm = [v / max_val for v in envelope] if max_val > 0 else envelope
             muscle_envelopes_norm[muscle] = env_norm
             
-            # Threshold is now simply the percentage (e.g., 5% = 0.05)
             norm_threshold = thresh_pct / 100.0
             muscle_thresholds_vals[muscle] = norm_threshold
             
             # Plot preview
             fig_env = go.Figure()
             
-            raw_scaled = [v / max_val for v in df[muscle]] if max_val > 0 else df[muscle]
+            raw_scaled = [v / max_val for v in hpf_data] if max_val > 0 else hpf_data
             
-            fig_env.add_trace(go.Scatter(x=df['Time'], y=raw_scaled, name='Raw (Scaled)', line=dict(color='lightgray', width=1)))
+            fig_env.add_trace(go.Scatter(x=df['Time'], y=raw_scaled, name='Processed Raw (Scaled)', line=dict(color='lightgray', width=1)))
             fig_env.add_trace(go.Scatter(x=df['Time'], y=env_norm, name='Normalized Env', line=dict(width=2, color='royalblue')))
             
-            # Draw threshold line
             fig_env.add_hline(y=norm_threshold, line_dash="dash", line_color="red", annotation_text=f"Threshold ({thresh_pct}%)")
-            
-            # Draw absolute max ceiling line
             fig_env.add_hline(y=1.0, line_dash="solid", line_color="black", opacity=0.2, annotation_text="Max Peak (1.0)")
             
-            # LOCK THE Y-AXIS RANGE
             fig_env.update_layout(
                 height=250, 
                 margin=dict(t=10, b=10, l=10, r=10), 
                 showlegend=True, 
                 yaxis_title="Norm Amp",
-                yaxis=dict(range=[0, 1.1]) # Sets a rigid scale from 0 to just slightly above 1
+                yaxis=dict(range=[-0.1, 1.1]) # Strict scale to perfectly align visual comparisons
             )
             st.plotly_chart(fig_env, use_container_width=True)
             st.write("") 
@@ -337,14 +357,11 @@ if data_exists:
             env_norm = muscle_envelopes_norm[muscle]
             norm_threshold = muscle_thresholds_vals[muscle]
             
-            # Determine active state for FULL record based on normalized data
             active_state = [i if val >= norm_threshold else np.nan for val in env_norm]
             
             if emg_view == "Full Record (Raw Time)" or not cycles:
-                # Plot full record
                 fig_timing.add_trace(go.Scatter(x=df['Time'], y=active_state, mode='lines', name=muscle, line=dict(width=15)))
             else:
-                # Slicing the PRE-PROCESSED data to match the specific cycle
                 sel_cycle = next(c for c in cycles if c['label'] == emg_view)
                 start_idx = sel_cycle['df'].index[0]
                 end_idx = sel_cycle['df'].index[-1] + 1
@@ -354,7 +371,6 @@ if data_exists:
                 
                 fig_timing.add_trace(go.Scatter(x=cycle_pct, y=cycle_active, mode='lines', name=muscle, line=dict(width=15)))
         
-        # Format the X-axis depending on view
         x_title = "Time (s)" if emg_view == "Full Record (Raw Time)" else "Normalized Gait Cycle (%)"
         
         fig_timing.update_layout(
